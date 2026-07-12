@@ -19,72 +19,239 @@ pip install -e .
 cp .env.example .env  # add your TMDB_API_KEY
 ```
 
-## Usage
+## CLI Reference
+
+### General
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `query` | `str` | *required* | Movie or TV show title |
+| `--type` | `movie` / `tv` | `movie` | Media type |
+| `--year` | `int` | — | Filter by release / air year |
+| `--quality` | `str` | `best` | Resolution (e.g. `1080p`, `720p`, `best`) |
+| `--season` | `int` | — | Season number (required for TV) |
+| `--episode` | `int` | — | Episode number (required for TV) |
+| `--movies-dir` | `str` | from `.env` | Override movie output directory |
+| `--tv-dir` | `str` | from `.env` | Override TV output directory |
+| `--no-confirm` | flag | — | Skip download confirmation prompt |
+| `--verbose` | flag | — | Enable debug logging |
+| `--verbose-ytdlp` | flag | — | Show yt-dlp output |
+
+### Examples
 
 ```bash
-# Movies
+# Simple movie download
 vidsrc-dlp "Inception"
 vidsrc-dlp "The Matrix" --year 1999
-vidsrc-dlp "Interstellar" --quality 1080p --no-confirm --verbose
 
-# TV Shows
+# Custom quality + skip prompt
+vidsrc-dlp "Interstellar" --quality 1080p --no-confirm
+
+# TV episode
 vidsrc-dlp "Breaking Bad" --type tv --season 1 --episode 1
-vidsrc-dlp "Severance" --type tv --season 2 --episode 5
 
-# Test with main.py (no install needed)
-python main.py "Inception"
+# Custom output directories
+vidsrc-dlp "Inception" --movies-dir "/Volumes/Media/Movies"
+vidsrc-dlp "Breaking Bad" --type tv --season 1 --episode 1 --tv-dir "/Volumes/Media/TV"
+
+# Debug mode
+vidsrc-dlp "Inception" --verbose --no-confirm
 ```
 
-## Output paths
-
-Configure in `.env` or override via CLI:
+### `.env` configuration
 
 ```
+TMDB_API_KEY=your_api_key_here
 MOVIES_DIR=./downloads/movies
 TV_DIR=./downloads/tv
 ```
 
-```bash
-vidsrc-dlp "Inception" --movies-dir "/Volumes/Media/Movies"
-vidsrc-dlp "Breaking Bad" --type tv --season 1 --episode 1 --tv-dir "/Volumes/Media/TV"
-```
+CLI flags `--movies-dir` and `--tv-dir` override the `.env` values when provided.
 
-## Naming convention
-
-```
-Movies:  {MOVIES_DIR}/Inception (2010)/Inception (2010).mp4
-TV:      {TV_DIR}/Breaking Bad/Season 01/Breaking Bad - S01E01 - Pilot.mp4
-```
+---
 
 ## Inline API (Python)
 
+### Public functions
+
+#### `search_movie(query, year=None, api_key=None) → list[Media]`
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `query` | `str` | — | Movie title to search for |
+| `year` | `int` | `None` | Filter by release year |
+| `api_key` | `str` | `None` | TMDB key (falls back to `.env`) |
+
 ```python
-from vidsrc_dlp import search_movie, get_movie_details, resolve, download
-from vidsrc_dlp import search_tv, get_tv_details
+>>> from vidsrc_dlp import search_movie
+>>> movies = search_movie("Inception", year=2010)
+>>> movies[0].title
+'Inception'
+```
 
-# Movies — search, enrich, resolve, download
-movies = search_movie("Inception", year=2010)
-movie = get_movie_details(movies[0].id)
-print(movie.imdb_id, movie.genres, movie.vote_average)
+---
 
-stream = resolve(movie)
-download(stream, movie)
+#### `search_tv(query, year=None, api_key=None) → list[Media]`
 
-# TV — search, enrich, resolve, download
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `query` | `str` | — | TV show title to search for |
+| `year` | `int` | `None` | Filter by first air year |
+| `api_key` | `str` | `None` | TMDB key (falls back to `.env`) |
+
+```python
+>>> from vidsrc_dlp import search_tv
+>>> shows = search_tv("Breaking Bad")
+>>> shows[0].title
+'Breaking Bad'
+```
+
+---
+
+#### `get_movie_details(tmdb_id, api_key=None) → Media | None`
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tmdb_id` | `int` | — | TMDB movie ID |
+| `api_key` | `str` | `None` | TMDB key (falls back to `.env`) |
+
+Returns enriched metadata (IMDb ID, genres, rating, poster path).
+
+```python
+>>> from vidsrc_dlp import get_movie_details
+>>> m = get_movie_details(27205)
+>>> m.imdb_id
+'tt1375666'
+>>> m.genres
+['Action', 'Science Fiction', 'Adventure']
+>>> m.vote_average
+8.4
+```
+
+---
+
+#### `get_tv_details(tmdb_id, api_key=None) → Media | None`
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tmdb_id` | `int` | — | TMDB TV show ID |
+| `api_key` | `str` | `None` | TMDB key (falls back to `.env`) |
+
+```python
+>>> from vidsrc_dlp import get_tv_details
+>>> show = get_tv_details(1396)
+>>> show.imdb_id
+'tt0903747'
+```
+
+---
+
+#### `resolve(media, season=None, episode=None) → StreamInfo | None`
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `media` | `Media` | — | Movie or TV show to resolve |
+| `season` | `int` | `None` | Season (reads from `media.season`) |
+| `episode` | `int` | `None` | Episode (reads from `media.episode`) |
+
+```python
+>>> from vidsrc_dlp import search_movie, resolve
+>>> movie = search_movie("Inception")[0]
+>>> stream = resolve(movie)
+>>> stream.url.startswith("http")
+True
+```
+
+---
+
+#### `download(stream, media, quality="best", movies_dir=None, tv_dir=None) → bool`
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `stream` | `StreamInfo` | — | Stream from `resolve()` |
+| `media` | `Media` | — | Movie or TV show metadata |
+| `quality` | `str` | `best` | Resolution (`1080p`, `720p`, `best`) |
+| `movies_dir` | `str` | from `.env` | Override movie output path |
+| `tv_dir` | `str` | from `.env` | Override TV output path |
+
+```python
+>>> from vidsrc_dlp import search_movie, resolve, download
+>>> movie = search_movie("Inception")[0]
+>>> stream = resolve(movie)
+>>> download(stream, movie)
+True
+```
+
+---
+
+### Data types
+
+#### `Media`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `int` | TMDB ID |
+| `title` | `str` | Movie or show name |
+| `media_type` | `MediaType` | `MOVIE` or `TV` |
+| `year` | `int \| None` | Release / air year |
+| `release_date` | `str` | Full date string |
+| `overview` | `str` | Plot synopsis |
+| `season` | `int \| None` | Season number (for TV) |
+| `episode` | `int \| None` | Episode number (for TV) |
+| `episode_title` | `str \| None` | Episode name |
+| `imdb_id` | `str \| None` | IMDb ID (after `get_*_details()`) |
+| `genres` | `list[str]` | Genre names |
+| `vote_average` | `float \| None` | TMDB rating |
+| `poster_path` | `str \| None` | TMDB poster path |
+
+#### `StreamInfo`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | `str` | Resolved HLS m3u8 URL |
+| `headers` | `dict[str, str]` | HTTP headers for download (`User-Agent`) |
+| `referer` | `str` | Referer URL required by CDN |
+| `stream_type` | `str` | Always `"hls"` |
+
+#### `MediaType` (enum)
+
+```
+MediaType.MOVIE
+MediaType.TV
+```
+
+---
+
+### Full workflow example
+
+```python
+from vidsrc_dlp import (
+    search_movie, get_movie_details, resolve, download,
+    search_tv, get_tv_details, MediaType, Media,
+)
+
+# === Movie ===
+movies = search_movie("Inception", year=2010)      # → list[Media]
+movie = get_movie_details(movies[0].id)             # → Media (enriched)
+print(movie.imdb_id, movie.genres, movie.year)      # tt1375666, [...]
+
+stream = resolve(movie)                              # → StreamInfo
+download(stream, movie, quality="1080p")             # → bool
+
+# === TV ===
 shows = search_tv("Breaking Bad")
 show = get_tv_details(shows[0].id)
-show.season = 1
+show.season = 1                                       # set before resolve()
 show.episode = 1
-show.episode_title = "Pilot"  # from TMDB episode endpoint
+show.episode_title = "Pilot"
 
 stream = resolve(show)
 download(stream, show)
-```
 
-You can pass `api_key` directly instead of using a `.env` file:
-
-```python
-movies = search_movie("Inception", api_key="your_tmdb_key")
+# === Pass api_key inline (skip .env) ===
+movies = search_movie("Inception", api_key="your_key")
+stream = resolve(movies[0])
+download(stream, movies[0], movies_dir="/custom/path")
 ```
 
 ## Architecture
