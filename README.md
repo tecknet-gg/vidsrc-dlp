@@ -12,7 +12,7 @@ cp .env.example .env  # add your TMDB_API_KEY
 Or for local development:
 
 ```bash
-git clone https://github.com/jeevan/vidsrc-dlp
+git clone https://github.com/tecknet-gg/vidsrc-dlp
 cd vidsrc-dlp
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
@@ -28,7 +28,7 @@ cp .env.example .env  # add your TMDB_API_KEY
 | `query` | `str` | *required* | Movie or TV show title |
 | `--type` | `movie` / `tv` | `movie` | Media type |
 | `--year` | `int` | — | Filter by release / air year |
-| `--quality` | `str` | `best` | Resolution (e.g. `1080p`, `720p`, `best`) |
+| `--quality` | `str` | `best` | Target resolution. `best` = highest available. E.g. `1080p`, `720p` |
 | `--season` | `int` | — | Season number (required for TV) |
 | `--episode` | `int` | — | Episode number (required for TV) |
 | `--movies-dir` | `str` | from `.env` | Override movie output directory |
@@ -57,6 +57,17 @@ vidsrc-dlp "Breaking Bad" --type tv --season 1 --episode 1 --tv-dir "/Volumes/Me
 # Debug mode
 vidsrc-dlp "Inception" --verbose --no-confirm
 ```
+
+### Quality selection
+
+When `--quality best` (the default), the stream is inspected with yt-dlp before downloading and the highest resolution variant is auto-selected. The detected resolutions are logged so you can see what's available:
+
+```
+[INFO] Available qualities: 1080p, 720p, 480p, 360p
+[INFO] Format: bestvideo+bestaudio/best
+```
+
+Pass a specific height via `--quality 1080p` or `--quality 720p` to override and constrain the selection.
 
 ### `.env` configuration
 
@@ -170,7 +181,7 @@ True
 |-------|------|---------|-------------|
 | `stream` | `StreamInfo` | — | Stream from `resolve()` |
 | `media` | `Media` | — | Movie or TV show metadata |
-| `quality` | `str` | `best` | Resolution (`1080p`, `720p`, `best`) |
+| `quality` | `str` | `best` | Target resolution. `best` = highest available. E.g. `1080p`, `720p` |
 | `movies_dir` | `str` | from `.env` | Override movie output path |
 | `tv_dir` | `str` | from `.env` | Override TV output path |
 

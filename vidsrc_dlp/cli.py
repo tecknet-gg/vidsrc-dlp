@@ -115,6 +115,13 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Stream URL: %s", stream.url[:100])
 
     downloader = VideoDownloader(config)
+
+    summary = downloader.format_summary(stream)
+    if summary:
+        logger.info("Available qualities: %s", summary)
+    else:
+        logger.info("Available qualities: detecting...")
+
     success = downloader.download(stream, best)
     raise SystemExit(0 if success else 1)
 

@@ -30,9 +30,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jeevan/vidsrc-dlp"
-Source = "https://github.com/jeevan/vidsrc-dlp"
-BugTracker = "https://github.com/jeevan/vidsrc-dlp/issues"
+Homepage = "https://github.com/tecknet-gg/vidsrc-dlp"
+Source = "https://github.com/tecknet-gg/vidsrc-dlp"
+BugTracker = "https://github.com/tecknet-gg/vidsrc-dlp/issues"
 
 [project.scripts]
 vidsrc-dlp = "vidsrc_dlp.cli:main"

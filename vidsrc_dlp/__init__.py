@@ -12,11 +12,15 @@ Usage (inline):
     >>> download(stream, movies[0])
 """
 
+import logging
+
 from vidsrc_dlp.config import load_config
 from vidsrc_dlp.downloader import VideoDownloader
 from vidsrc_dlp.resolver import VidSrcResolver
 from vidsrc_dlp.tmdb import TMDBClient
 from vidsrc_dlp.utils import Media, MediaType, StreamInfo
+
+logger = logging.getLogger("vidsrc_dlp.api")
 
 __version__ = "0.3.0"
 __all__ = [
@@ -183,6 +187,9 @@ def download(
 ) -> bool:
     """Download a resolved stream to disk.
 
+    Before downloading, inspects the stream and selects the best
+    matching quality. Logs available qualities for transparency.
+
     Parameters
     ----------
     stream : StreamInfo
@@ -190,7 +197,8 @@ def download(
     media : Media
         The movie or TV show being downloaded.
     quality : str, optional
-        Quality (e.g. "1080p", "720p", "best").
+        Target quality (e.g. "1080p", "720p", "best").
+        Defaults to the highest available.
     movies_dir : str, optional
         Override movies output directory.
     tv_dir : str, optional
@@ -214,4 +222,8 @@ def download(
         tv_dir=tv_dir,
         quality=quality,
     )
-    return VideoDownloader(config).download(stream, media)
+    downloader = VideoDownloader(config)
+    summary = downloader.format_summary(stream)
+    if summary:
+        logger.info("Available qualities: %s", summary)
+    return downloader.download(stream, media)

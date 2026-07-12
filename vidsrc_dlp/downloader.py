@@ -16,6 +16,56 @@ logger = logging.getLogger("vidsrc_dlp.downloader")
 class VideoDownloader:
     config: Config
 
+    def list_formats(self, stream: StreamInfo) -> list[dict]:
+        """Inspect the stream and return available video formats.
+
+        Each format dict contains keys like:
+            format_id, height, width, vcodec, acodec, tbr, filesize,
+            format_note (e.g. "1080p"), ext
+        """
+        quiet = not logger.isEnabledFor(logging.DEBUG)
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "http_headers": {
+                "User-Agent": stream.headers.get(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                ),
+                "Referer": stream.referer or stream.url,
+            },
+        }
+        try:
+            with yt_dlp.YoutubeDL({**opts, "quiet": quiet}) as ydl:
+                info = ydl.extract_info(stream.url, download=False)
+            formats = info.get("formats", []) if info else []
+            videos = sorted(
+                (f for f in formats if f.get("vcodec") and f.get("vcodec") != "none"),
+                key=lambda f: f.get("height") or 0,
+                reverse=True,
+            )
+            return videos
+        except Exception as e:
+            logger.debug("Format detection failed: %s", e)
+            return []
+
+    def format_summary(self, stream: StreamInfo | None) -> str | None:
+        """Describe available qualities as a human-readable string."""
+        if not stream:
+            return None
+        formats = self.list_formats(stream)
+        if not formats:
+            return None
+        seen: set[int] = set()
+        parts = []
+        for f in formats:
+            h = f.get("height")
+            if h and h not in seen:
+                seen.add(h)
+                note = f.get("format_note") or f"{h}p"
+                parts.append(note)
+        return ", ".join(parts) if parts else None
+
     def download(self, stream: StreamInfo, media: Media) -> bool:
         if media.media_type == MediaType.TV:
             output_dir, filename = self._tv_path(media)
@@ -25,8 +75,11 @@ class VideoDownloader:
         output_dir.mkdir(parents=True, exist_ok=True)
         output_template = str(output_dir / f"{filename}.%(ext)s")
 
+        fmt = self._build_format_spec()
+        logger.info("Format: %s", fmt)
+
         ydl_opts: dict = {
-            "format": self._build_format_spec(),
+            "format": fmt,
             "outtmpl": output_template,
             "merge_output_format": "mp4",
             "http_headers": {
