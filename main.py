@@ -1,4 +1,4 @@
-from moviefinder.cli import main
+from vidsrc_dlp.cli import main
 
 if __name__ == "__main__":
     main()

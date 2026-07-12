@@ -23,13 +23,13 @@ cp .env.example .env  # add your TMDB_API_KEY
 
 ```bash
 # Movies
-moviefinder "Inception"
-moviefinder "The Matrix" --year 1999
-moviefinder "Interstellar" --quality 1080p --no-confirm --verbose
+vidsrc-dlp "Inception"
+vidsrc-dlp "The Matrix" --year 1999
+vidsrc-dlp "Interstellar" --quality 1080p --no-confirm --verbose
 
 # TV Shows
-moviefinder "Breaking Bad" --type tv --season 1 --episode 1
-moviefinder "Severance" --type tv --season 2 --episode 5
+vidsrc-dlp "Breaking Bad" --type tv --season 1 --episode 1
+vidsrc-dlp "Severance" --type tv --season 2 --episode 5
 
 # Test with main.py (no install needed)
 python main.py "Inception"
@@ -45,8 +45,8 @@ TV_DIR=./downloads/tv
 ```
 
 ```bash
-moviefinder "Inception" --movies-dir "/Volumes/Media/Movies"
-moviefinder "Breaking Bad" --type tv --season 1 --episode 1 --tv-dir "/Volumes/Media/TV"
+vidsrc-dlp "Inception" --movies-dir "/Volumes/Media/Movies"
+vidsrc-dlp "Breaking Bad" --type tv --season 1 --episode 1 --tv-dir "/Volumes/Media/TV"
 ```
 
 ## Naming convention
@@ -75,7 +75,7 @@ vidsrc.to/embed/{movie|tv}/{tmdb_id}[/{season}/{episode}]
 
 ## Adding a new stream provider
 
-Implement `StreamProvider` from `moviefinder.utils`.
+Implement `StreamProvider` from `vidsrc_dlp.utils`.
 
 ## Acknowledgements
 
