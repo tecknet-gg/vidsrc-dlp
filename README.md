@@ -1,4 +1,4 @@
-# MovieFinder
+# vidsrc-downloader
 
 Search TMDB, resolve a playable HLS stream via VidSrc's 4-hop chain, and download via yt-dlp.
 
