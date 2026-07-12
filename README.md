@@ -65,3 +65,11 @@ vidsrc.to/embed/{movie|tv}/{tmdb_id}[/{season}/{episode}]
 ## Adding a new stream provider
 
 Implement `StreamProvider` from `moviefinder.utils`.
+
+## Acknowledgements
+
+- **[MaheshSharan/vidsrc](https://github.com/MaheshSharan/vidsrc)** — The request-based 4-hop resolution chain was reverse-engineered from this open-source PHP scraper. Critical reference for the VidSrc token flow.
+- **[TMDB](https://www.themoviedb.org/)** — Movie and TV metadata API. All search, detail, episode info sourced from their free tier.
+- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — The download engine. Handles HLS fragment fetching, decryption, and ffmpeg transcoding.
+- **[requests](https://github.com/psf/requests)** — HTTP library for the resolver chain.
+- **[python-dotenv](https://github.com/theskumar/python-dotenv)** — Environment variable loading from `.env`.
