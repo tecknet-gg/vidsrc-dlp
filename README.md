@@ -1,13 +1,21 @@
-# vidsrc-downloader
+# vidsrc-dlp
 
 Search TMDB, resolve a playable HLS stream via VidSrc's 4-hop chain, and download via yt-dlp.
 
-## Setup
+## Install
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+pip install vidsrc-dlp
+cp .env.example .env  # add your TMDB_API_KEY
+```
+
+Or for local development:
+
+```bash
+git clone https://github.com/jeevan/vidsrc-dlp
+cd vidsrc-dlp
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
 cp .env.example .env  # add your TMDB_API_KEY
 ```
 
@@ -15,13 +23,16 @@ cp .env.example .env  # add your TMDB_API_KEY
 
 ```bash
 # Movies
-python main.py "Inception"
-python main.py "The Matrix" --year 1999
-python main.py "Interstellar" --quality 1080p --no-confirm --verbose
+moviefinder "Inception"
+moviefinder "The Matrix" --year 1999
+moviefinder "Interstellar" --quality 1080p --no-confirm --verbose
 
 # TV Shows
-python main.py "Breaking Bad" --type tv --season 1 --episode 1
-python main.py "Severance" --type tv --season 2 --episode 5
+moviefinder "Breaking Bad" --type tv --season 1 --episode 1
+moviefinder "Severance" --type tv --season 2 --episode 5
+
+# Test with main.py (no install needed)
+python main.py "Inception"
 ```
 
 ## Output paths
@@ -34,15 +45,15 @@ TV_DIR=./downloads/tv
 ```
 
 ```bash
-python main.py "Inception" --movies-dir "/Volumes/Media/Movies"
-python main.py "Breaking Bad" --type tv --season 1 --episode 1 --tv-dir "/Volumes/Media/TV"
+moviefinder "Inception" --movies-dir "/Volumes/Media/Movies"
+moviefinder "Breaking Bad" --type tv --season 1 --episode 1 --tv-dir "/Volumes/Media/TV"
 ```
 
 ## Naming convention
 
 ```
-Movies:  ./downloads/movies/Inception (2010)/Inception (2010).mp4
-TV:      ./downloads/tv/Breaking Bad/Season 01/Breaking Bad - S01E01 - Pilot.mp4
+Movies:  {MOVIES_DIR}/Inception (2010)/Inception (2010).mp4
+TV:      {TV_DIR}/Breaking Bad/Season 01/Breaking Bad - S01E01 - Pilot.mp4
 ```
 
 ## Architecture

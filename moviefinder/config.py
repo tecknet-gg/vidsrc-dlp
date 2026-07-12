@@ -17,6 +17,7 @@ class Config:
 
 
 def load_config(
+    api_key: str | None = None,
     movies_dir: str | None = None,
     tv_dir: str | None = None,
     quality: str | None = None,
@@ -24,7 +25,7 @@ def load_config(
 ) -> Config:
     load_dotenv()
 
-    api_key = os.getenv("TMDB_API_KEY")
+    api_key = api_key or os.getenv("TMDB_API_KEY")
     if not api_key:
         raise ValueError(
             "TMDB_API_KEY not found in .env file. "
