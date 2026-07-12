@@ -56,6 +56,37 @@ Movies:  {MOVIES_DIR}/Inception (2010)/Inception (2010).mp4
 TV:      {TV_DIR}/Breaking Bad/Season 01/Breaking Bad - S01E01 - Pilot.mp4
 ```
 
+## Inline API (Python)
+
+```python
+from vidsrc_dlp import search_movie, get_movie_details, resolve, download
+from vidsrc_dlp import search_tv, get_tv_details
+
+# Movies — search, enrich, resolve, download
+movies = search_movie("Inception", year=2010)
+movie = get_movie_details(movies[0].id)
+print(movie.imdb_id, movie.genres, movie.vote_average)
+
+stream = resolve(movie)
+download(stream, movie)
+
+# TV — search, enrich, resolve, download
+shows = search_tv("Breaking Bad")
+show = get_tv_details(shows[0].id)
+show.season = 1
+show.episode = 1
+show.episode_title = "Pilot"  # from TMDB episode endpoint
+
+stream = resolve(show)
+download(stream, show)
+```
+
+You can pass `api_key` directly instead of using a `.env` file:
+
+```python
+movies = search_movie("Inception", api_key="your_tmdb_key")
+```
+
 ## Architecture
 
 1. **TMDB** — search API for movie/TV metadata
@@ -79,8 +110,6 @@ Implement `StreamProvider` from `vidsrc_dlp.utils`.
 
 ## Acknowledgements
 
-- **[MaheshSharan/vidsrc](https://github.com/MaheshSharan/vidsrc)** — The request-based 4-hop resolution chain was reverse-engineered from this open-source PHP scraper. Critical reference for the VidSrc token flow.
-- **[TMDB](https://www.themoviedb.org/)** — Movie and TV metadata API. All search, detail, episode info sourced from their free tier.
-- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — The download engine. Handles HLS fragment fetching, decryption, and ffmpeg transcoding.
-- **[requests](https://github.com/psf/requests)** — HTTP library for the resolver chain.
-- **[python-dotenv](https://github.com/theskumar/python-dotenv)** — Environment variable loading from `.env`.
+- **[MaheshSharan/vidsrc](https://github.com/MaheshSharan/vidsrc)** — The request-based 4-hop resolution chain was reverse-engineered from this open-source PHP scraper.
+- **[TMDB](https://www.themoviedb.org/)** — Movie and TV metadata API.
+- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — Download engine for HLS fetching, decryption, and ffmpeg transcoding.
