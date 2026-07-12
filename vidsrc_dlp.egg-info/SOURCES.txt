@@ -1,0 +1,17 @@
+.env.example
+MANIFEST.in
+README.md
+pyproject.toml
+vidsrc_dlp/__init__.py
+vidsrc_dlp/cli.py
+vidsrc_dlp/config.py
+vidsrc_dlp/downloader.py
+vidsrc_dlp/resolver.py
+vidsrc_dlp/tmdb.py
+vidsrc_dlp/utils.py
+vidsrc_dlp.egg-info/PKG-INFO
+vidsrc_dlp.egg-info/SOURCES.txt
+vidsrc_dlp.egg-info/dependency_links.txt
+vidsrc_dlp.egg-info/entry_points.txt
+vidsrc_dlp.egg-info/requires.txt
+vidsrc_dlp.egg-info/top_level.txt

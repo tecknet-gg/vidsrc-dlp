@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vidsrc-dlp"
+version = "0.3.0"
+description = "CLI to search TMDB, resolve VidSrc streams, and download via yt-dlp"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Jeevan" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video",
+]
+keywords = ["vidsrc", "tmdb", "yt-dlp", "video", "downloader"]
+dependencies = [
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "yt-dlp>=2024.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/jeevan/vidsrc-dlp"
+Source = "https://github.com/jeevan/vidsrc-dlp"
+BugTracker = "https://github.com/jeevan/vidsrc-dlp/issues"
+
+[project.scripts]
+vidsrc-dlp = "vidsrc_dlp.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vidsrc_dlp*"]
