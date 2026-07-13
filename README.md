@@ -1,5 +1,11 @@
 # vidsrc-dlp
 
+**DISCLAIMER:**
+
+**This project was vibecoded (using Opencode), to a fit a niche that I had in my personal Jellyfin setup. The code here is as is, and by using it you accept the risks of running unverified, AI generated code.**
+
+---
+
 Search TMDB, resolve a playable HLS stream via VidSrc's 4-hop chain, and download via yt-dlp.
 
 ## Install
