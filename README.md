@@ -2,7 +2,7 @@
 
 **DISCLAIMER:**
 
-**This project was vibecoded (using Opencode), to a fit a niche that I had in my personal Jellyfin setup. The code here is as is, and by using it you accept the risks of running unverified, AI generated code.**
+**This project was vibecoded (using Opencode), to a fit a niche that I had in my personal Jellyfin setup. The code here is as is, and by using it you accept the risks of running unverified, AI generated code. Maybe I'll rewrite it myself if I get time.**
 
 ---
 
