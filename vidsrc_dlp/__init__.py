@@ -16,13 +16,13 @@ import logging
 
 from vidsrc_dlp.config import load_config
 from vidsrc_dlp.downloader import VideoDownloader
-from vidsrc_dlp.resolver import VidSrcResolver
+from vidsrc_dlp.resolver import MultiDomainResolver, VidSrcResolver
 from vidsrc_dlp.tmdb import TMDBClient
 from vidsrc_dlp.utils import Media, MediaType, StreamInfo
 
 logger = logging.getLogger("vidsrc_dlp.api")
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 __all__ = [
     "Media",
     "MediaType",
@@ -168,7 +168,7 @@ def resolve(
     >>> stream.url.startswith("http")
     True
     """
-    resolver = VidSrcResolver()
+    resolver = MultiDomainResolver()
     media_type = "tv" if media.media_type == MediaType.TV else "movie"
     return resolver.resolve(
         media.id,

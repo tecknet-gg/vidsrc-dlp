@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: vidsrc-dlp
-Version: 0.7.0
+Version: 0.7.1
 Summary: CLI to search TMDB, resolve VidSrc streams, and download via yt-dlp
 Author: Jeevan
 License-Expression: MIT
@@ -34,13 +34,19 @@ Dynamic: license-file
 
 ---
 
-Search TMDB, resolve a playable HLS stream via VidSrc's 4-hop chain, and download via yt-dlp.
+Search TMDB, resolve a playable HLS stream, and download via yt-dlp. Automatically tries multiple providers for the best quality available.
 
 ## Install
 
 ```bash
 pip install vidsrc-dlp
 cp .env.example .env  # add your TMDB_API_KEY
+```
+
+For 4K quality (requires Playwright):
+```bash
+pip install vidsrc-dlp[playwright]
+playwright install chromium
 ```
 
 Or for local development:
@@ -62,7 +68,8 @@ cp .env.example .env  # add your TMDB_API_KEY
 | `query` | `str` | *required* | Movie or TV show title |
 | `--type` | `movie` / `tv` | `movie` | Media type |
 | `--year` | `int` | — | Filter by release / air year |
-| `--quality` | `str` | `best` | Target resolution. `best` = highest available. E.g. `1080p`, `720p` |
+| `--quality` | `str` | `1080p` | Target resolution. `best` = highest available (may be very large). E.g. `1080p`, `720p` |
+| `--provider` | `auto` / `vidsrc` | `auto` | `auto` tries Cineby → Mapple → vidsrc. `vidsrc` uses legacy single-domain |
 | `--season` | `int` | — | Season number (required for TV) |
 | `--episode` | `int` | — | Episode number (required for TV) |
 | `--movies-dir` | `str` | from `.env` | Override movie output directory |
@@ -74,12 +81,14 @@ cp .env.example .env  # add your TMDB_API_KEY
 ### Examples
 
 ```bash
-# Simple movie download
-vidsrc-dlp "Inception"
-vidsrc-dlp "The Matrix" --year 1999
+# Simple movie download (1080p default, ~6 GiB for 2.5hr)
+vidsrc-dlp "Spider-Man: No Way Home"
+
+# 4K quality (requires Playwright, ~18 GiB for 2.5hr)
+vidsrc-dlp "Interstellar" --quality best
 
 # Custom quality + skip prompt
-vidsrc-dlp "Interstellar" --quality 1080p --no-confirm
+vidsrc-dlp "Inception" --quality 720p --no-confirm
 
 # TV episode
 vidsrc-dlp "Breaking Bad" --type tv --season 1 --episode 1
@@ -94,14 +103,23 @@ vidsrc-dlp "Inception" --verbose --no-confirm
 
 ### Quality selection
 
-When `--quality best` (the default), the stream is inspected with yt-dlp before downloading and the highest resolution variant is auto-selected. The detected resolutions are logged so you can see what's available:
+Default quality is `1080p`, capping downloads at ~6 GiB for a 2.5hr film. Use `--quality best` to select the highest available variant (may be 4K/2160p, ~18 GiB). The detected resolutions are logged:
 
 ```
-[INFO] Available qualities: 1080p, 720p, 480p, 360p
-[INFO] Format: bestvideo+bestaudio/best
+[INFO] Available qualities: 480p, 720p, 1080p, 2160p
+[INFO] Format: bestvideo[height<=1080]+bestaudio/best[height<=1080]/best
 ```
 
-Pass a specific height via `--quality 1080p` or `--quality 720p` to override and constrain the selection.
+Pass `--quality 720p` or `--quality 480p` to constrain further.
+
+### Provider selection
+
+`--provider auto` (default) tries in order:
+1. **Cineby** — requires Playwright, up to 4K@16Mbps
+2. **Mapple** — no browser needed, up to 1080p@8Mbps
+3. **vidsrc** — legacy scrape, up to 800p
+
+If Playwright is not installed, Cineby is skipped automatically.
 
 ### `.env` configuration
 
@@ -209,13 +227,13 @@ True
 
 ---
 
-#### `download(stream, media, quality="best", movies_dir=None, tv_dir=None) → bool`
+#### `download(stream, media, quality="1080p", movies_dir=None, tv_dir=None) → bool`
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `stream` | `StreamInfo` | — | Stream from `resolve()` |
 | `media` | `Media` | — | Movie or TV show metadata |
-| `quality` | `str` | `best` | Target resolution. `best` = highest available. E.g. `1080p`, `720p` |
+| `quality` | `str` | `1080p` | Target resolution. `best` = highest. E.g. `1080p`, `720p` |
 | `movies_dir` | `str` | from `.env` | Override movie output path |
 | `tv_dir` | `str` | from `.env` | Override TV output path |
 
@@ -257,6 +275,7 @@ True
 | `headers` | `dict[str, str]` | HTTP headers for download (`User-Agent`) |
 | `referer` | `str` | Referer URL required by CDN |
 | `stream_type` | `str` | Always `"hls"` |
+| `urls` | `list[str]` | All resolved variant URLs (for quality selection) |
 
 #### `MediaType` (enum)
 
@@ -301,24 +320,46 @@ download(stream, movies[0], movies_dir="/custom/path")
 
 ## Architecture
 
-1. **TMDB** — search API for movie/TV metadata
-2. **VidSrc Resolver** — `requests`-only 4-hop chain to extract an HLS URL
-3. **Downloader** — `yt-dlp` + ffmpeg to download and transcode to MP4
+```
+┌─────────────┐    ┌──────────────────────────────────────┐    ┌────────────┐
+│   TMDB API  │───▶│  Multi-Provider Stream Resolver      │───▶│  yt-dlp    │
+└─────────────┘    │                                      │    │  + ffmpeg  │
+                   │  1. Cineby (Playwright, 4K@16Mbps)   │    └────────────┘
+                   │  2. Mapple  (direct API, 1080p@8Mbps)│
+                   │  3. vidsrc  (legacy scrape, 800p)     │
+                   └──────────────────────────────────────┘
+```
 
-## How the resolver works
+## How the resolvers work
 
+### Cineby (4K, requires Playwright)
+```
+cineby.at/movie/{tmdb_id}?play=true
+  → Playwright headless Chromium
+    → api.speedracelight.com/seed (Cloudflare bypassed by browser)
+      → client-side JS decrypts sources
+        → moon.ironwallnet.net/vd/... (4K HLS master playlist)
+```
+
+### Mapple (1080p, no browser)
+```
+mapple.rip/api/stream?mediaId={tmdb_id}&mediaType=movie&source=mapple&apikey=...
+  → source.heistotron.uk/p/... (1080p HLS master playlist)
+```
+
+### VidSrc (800p, legacy fallback)
 ```
 vidsrc.to/embed/{movie|tv}/{tmdb_id}[/{season}/{episode}]
-  → vsembed.ru iframe (parse src attr)
-    → cloudorchestranova.com/rcp/{hash} (parse prorcp hash)
-      → cloudorchestranova.com/prorcp/{hash} (m3u8 URLs with __TOKEN__ placeholders)
+  → vsembed.ru iframe
+    → cloudorchestranova.com/rcp/{hash}
+      → cloudorchestranova.com/prorcp/{hash}
         → generate.php endpoints (JWT tokens)
           → final m3u8 URL
 ```
 
 ## Adding a new stream provider
 
-Implement `StreamProvider` from `vidsrc_dlp.utils`.
+Implement `StreamProvider` from `vidsrc_dlp.utils` and register it in `MultiDomainResolver.resolve()`.
 
 ## Acknowledgements
 
