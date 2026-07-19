@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 from dataclasses import dataclass, field
 
 import requests
@@ -34,6 +33,104 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
+
+_VSW_SOURCES: list[dict[str, str]] = [
+    {
+        "name": "4K",
+        "base": "https://player.videasy.net",
+        "movie": "/movie/{id}",
+        "tv": "/tv/{id}/{s}/{e}?nextEpisode=true&autoplayNextEpisode=true&episodeSelector=true&color=#E50914",
+    },
+    {
+        "name": "4K2",
+        "base": "https://www.vidking.net/embed",
+        "movie": "/movie/{id}",
+        "tv": "/tv/{id}/{s}/{e}?nextEpisode=true&autoplayNextEpisode=true&episodeSelector=true&overlay=true&color=8B5CF6",
+    },
+    {
+        "name": "4KHD",
+        "base": "https://mapple.uk/watch",
+        "movie": "/movie/{id}?autoPlay=true&theme=addc35",
+        "tv": "/tv/{id}/{s}/{e}?autoPlay=true&theme=addc35",
+    },
+    {
+        "name": "Vidsrc",
+        "base": "https://vidsrcme.ru/embed",
+        "movie": "/movie/{id}",
+        "tv": "/tv/{id}/{s}/{e}",
+    },
+    {
+        "name": "Astra",
+        "base": "https://vidsrc.su/embed",
+        "movie": "/movie/{id}",
+        "tv": "/tv/{id}/{s}/{e}",
+    },
+    {
+        "name": "Vidplay",
+        "base": "https://vidsrc.cc/v2/embed",
+        "movie": "/movie/{id}",
+        "tv": "/tv/{id}/{s}/{e}",
+    },
+    {
+        "name": "Pablo",
+        "base": "https://vidsrc.cc/v3/embed",
+        "movie": "/movie/{id}",
+        "tv": "/tv/{id}/{s}/{e}",
+    },
+    {
+        "name": "Prime",
+        "base": "https://player.vidrush.net/embed",
+        "movie": "/{id}",
+        "tv": "/{id}/{s}/{e}",
+    },
+    {
+        "name": "Vidlink",
+        "base": "https://vidlink.pro",
+        "movie": "/movie/{id}",
+        "tv": (
+            "/tv/{id}/{s}/{e}"
+            "?primaryColor=63b8bc&secondaryColor=a2a2a2&iconColor=eefdec"
+            "&icons=default&player=default&title=true&poster=true"
+            "&autoplay=true&nextbutton=true"
+        ),
+    },
+    {
+        "name": "Vidora",
+        "base": "https://anyembed.xyz/embed",
+        "movie": "/tmdb-movie-{id}",
+        "tv": "/tmdb-tv-{id}-{s}-{e}",
+    },
+    {
+        "name": "Aura",
+        "base": "https://player.autoembed.app/embed",
+        "movie": "/movie/{id}",
+        "tv": "/tv/{id}/{s}/{e}",
+    },
+    {
+        "name": "Fade",
+        "base": "https://rivestream.org/embed",
+        "movie": "?type=movie&id={id}&sendMetadata=true",
+        "tv": "?type=tv&id={id}&season={s}&episode={e}&autoplay=true&sendMetadata=true",
+    },
+    {
+        "name": "Vidind",
+        "base": "https://player.vidify.top/embed",
+        "movie": "/movie/{id}",
+        "tv": "/tv/{id}/{s}/{e}",
+    },
+    {
+        "name": "Main",
+        "base": "https://player.vidzee.wtf/embed",
+        "movie": "/movie/{id}",
+        "tv": "/tv/{id}/{s}/{e}",
+    },
+    {
+        "name": "Flix",
+        "base": "https://player.vidplus.to/embed",
+        "movie": "/movie/{id}",
+        "tv": "/tv/{id}/{s}/{e}",
+    },
+]
 
 
 @dataclass
@@ -177,6 +274,105 @@ class VidSrcResolver(StreamProvider):
 
 
 @dataclass
+class VidsrcWinResolver(StreamProvider):
+    timeout: int = 45
+
+    def resolve(
+        self,
+        tmdb_id: int,
+        media_type: str = "movie",
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> StreamInfo | None:
+        logger.info("Resolving TMDB ID %d (%s) via Vidsrc.win", tmdb_id, media_type)
+        try:
+            return self._resolve_with_playwright(tmdb_id, media_type, season, episode)
+        except ImportError:
+            logger.warning("Playwright not installed")
+            return None
+        except Exception as e:
+            logger.error("Vidsrc.win resolution failed: %s", e)
+            return None
+
+    def _resolve_with_playwright(
+        self, tmdb_id: int, media_type: str, season: int | None, episode: int | None,
+    ) -> StreamInfo | None:
+        import asyncio
+        from playwright.async_api import async_playwright
+
+        if media_type == "tv" and season is not None and episode is not None:
+            url = f"https://vidsrc.win/watch/tv/{tmdb_id}/{season}/{episode}"
+        else:
+            url = f"https://vidsrc.win/watch/{tmdb_id}"
+
+        async def _capture() -> list[str]:
+            try:
+                async with async_playwright() as pw:
+                    browser = await pw.chromium.launch(
+                        headless=True,
+                        args=["--no-sandbox", "--disable-setuid-sandbox",
+                              "--disable-dev-shm-usage", "--disable-gpu"],
+                    )
+                    page = await browser.new_page(viewport={"width": 1920, "height": 1080})
+
+                    m3u8_urls: list[str] = []
+
+                    async def on_response(response):
+                        ct = response.headers.get("content-type", "")
+                        if "application/vnd.apple.mpegurl" in ct:
+                            m3u8_urls.append(response.url)
+
+                    page.on("response", on_response)
+
+                    try:
+                        await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+                    except Exception:
+                        pass
+
+                    await asyncio.sleep(5)
+
+                    for f in page.frames:
+                        if "videasy" in f.url:
+                            try:
+                                btn = await f.query_selector("button")
+                                if btn:
+                                    await btn.click(force=True)
+                                    await asyncio.sleep(10)
+                            except Exception:
+                                pass
+                            break
+
+                    await asyncio.sleep(3)
+
+                    await browser.close()
+                    return m3u8_urls
+            except Exception as e:
+                logger.debug("Vidsrc.win capture error: %s", e)
+                return []
+
+        try:
+            m3u8_urls = _run_async(_capture())
+        except Exception as e:
+            logger.debug("Vidsrc.win capture error: %s", e)
+            m3u8_urls = []
+
+        if not m3u8_urls:
+            logger.warning("No m3u8 streams captured from Vidsrc.win")
+            return None
+
+        logger.info("Vidsrc.win resolved 4K stream")
+        return StreamInfo(
+            url=m3u8_urls[0],
+            headers={"User-Agent": HEADERS["User-Agent"]},
+            referer="https://vidsrc.win/",
+            stream_type="hls",
+        )
+        else:
+            url = source["movie"].replace("{id}", str(tmdb_id))
+        return f"{base}{url}"
+
+
+@dataclass
 class CinebyResolver(StreamProvider):
     base_url: str = "https://www.cineby.at/movie"
     timeout: int = 60
@@ -240,11 +436,7 @@ class CinebyResolver(StreamProvider):
                     viewport={"width": 1920, "height": 1080},
                     locale="en-US",
                     timezone_id="Europe/London",
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/126.0.0.0 Safari/537.36"
-                    ),
+                    user_agent=HEADERS["User-Agent"],
                 )
                 page = await context.new_page()
 
@@ -377,6 +569,12 @@ class MultiDomainResolver(StreamProvider):
         logger.info(
             "Resolving TMDB ID %d (%s) with auto provider", tmdb_id, media_type,
         )
+
+        vwin = VidsrcWinResolver()
+        result = vwin.resolve(tmdb_id, media_type, season, episode)
+        if self._accept(result):
+            return result
+        logger.info("Vidsrc.win unavailable, trying Cineby")
 
         cineby = CinebyResolver()
         result = cineby.resolve(tmdb_id, media_type, season, episode)
