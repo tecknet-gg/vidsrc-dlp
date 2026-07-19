@@ -248,8 +248,11 @@ class CinebyResolver(StreamProvider):
         episode: int | None = None,
     ) -> StreamInfo | None:
         logger.info("Resolving TMDB ID %d (%s) via Cineby (4K)", tmdb_id, media_type)
+        if media_type != "movie":
+            logger.info("Cineby only supports movies, skipping")
+            return None
         try:
-            return self._resolve_with_playwright(tmdb_id, media_type, season, episode)
+            return self._resolve_with_playwright(tmdb_id)
         except ImportError:
             logger.warning("Playwright not installed. Install with: pip install playwright && playwright install chromium")
             return None
@@ -257,41 +260,55 @@ class CinebyResolver(StreamProvider):
             logger.error("Cineby resolution failed: %s", e)
             return None
 
-    def _resolve_with_playwright(
-        self,
-        tmdb_id: int,
-        media_type: str,
-        season: int | None,
-        episode: int | None,
-    ) -> StreamInfo | None:
+    def _resolve_with_playwright(self, tmdb_id: int) -> StreamInfo | None:
         from playwright.async_api import async_playwright
         import asyncio
 
         url = f"{self.base_url}/{tmdb_id}?play=true"
 
-        async def _run():
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
+        async def _capture(retries: int = 2) -> list[str]:
+            from playwright.async_api import async_playwright as _async_pw
+            for attempt in range(retries):
+                async with _async_pw() as pw:
+                    browser = await pw.chromium.launch(
+                        headless=True,
+                        args=[
+                            "--no-sandbox",
+                            "--disable-setuid-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                        ],
+                    )
+                    context = await browser.new_context(
+                        viewport={"width": 1920, "height": 1080},
+                        locale="en-US",
+                        user_agent=HEADERS["User-Agent"],
+                    )
+                    page = await context.new_page()
 
-                m3u8_urls: list[str] = []
+                    m3u8_urls: list[str] = []
 
-                async def on_response(response):
-                    res_url = response.url
-                    ct = response.headers.get("content-type", "")
-                    if "application/vnd.apple.mpegurl" in ct:
-                        m3u8_urls.append(res_url)
+                    async def on_response(response):
+                        ct = response.headers.get("content-type", "")
+                        if "application/vnd.apple.mpegurl" in ct:
+                            m3u8_urls.append(response.url)
 
-                page.on("response", on_response)
+                    page.on("response", on_response)
 
-                await page.goto(url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
-                await asyncio.sleep(8)
+                    try:
+                        await page.goto(url, wait_until="networkidle", timeout=self.timeout * 1000)
+                    except Exception:
+                        await asyncio.sleep(10)
 
-                await browser.close()
+                    await asyncio.sleep(10)
+                    await browser.close()
 
-                return m3u8_urls
+                    if m3u8_urls:
+                        return m3u8_urls
+                    logger.debug("Cineby attempt %d/%d: no m3u8s, retrying", attempt + 1, retries)
+            return []
 
-        m3u8_urls = _run_async(_run())
+        m3u8_urls = _run_async(_capture())
 
         if not m3u8_urls:
             logger.warning("No m3u8 streams captured from Cineby")
@@ -317,6 +334,48 @@ class MultiDomainResolver(StreamProvider):
     request_delay: float = 0.3
     timeout: int = 30
 
+    def _accept(self, stream: StreamInfo | None) -> bool:
+        if stream is None:
+            return False
+        try:
+            import yt_dlp
+            opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "http_headers": {
+                    "User-Agent": stream.headers.get("User-Agent", HEADERS["User-Agent"]),
+                    "Referer": stream.referer or stream.url,
+                },
+            }
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(stream.url, download=False)
+            total = info.get("filesize_approx") or info.get("filesize") or 0
+            heights = sorted(set(
+                f.get("height") for f in info.get("formats") or []
+                if f.get("height")
+            ))
+            max_height = heights[-1] if heights else 0
+            frag_count = len(info.get("fragments") or info.get("requested_formats") or [])
+            if total > 0 and total < 50 * 1024 * 1024 and not heights:
+                logger.warning(
+                    "Rejecting stream: only %.0f MB estimated with no resolvable heights",
+                    total / 1024 / 1024,
+                )
+                return False
+            if max_height < 240 and total > 0 and total < 50 * 1024 * 1024:
+                logger.warning(
+                    "Rejecting stream: max height %dp with only %.0f MB",
+                    max_height, total / 1024 / 1024,
+                )
+                return False
+            logger.debug(
+                "Stream check: max %dp, %d fragments, %.0f MB",
+                max_height, frag_count, total / 1024 / 1024,
+            )
+        except Exception as e:
+            logger.debug("Quality check skipped: %s", e)
+        return True
+
     def resolve(
         self,
         tmdb_id: int,
@@ -330,13 +389,13 @@ class MultiDomainResolver(StreamProvider):
 
         cineby = CinebyResolver()
         result = cineby.resolve(tmdb_id, media_type, season, episode)
-        if result:
+        if self._accept(result):
             return result
         logger.info("Cineby unavailable, trying Mapple")
 
         mapple = MappleResolver()
         result = mapple.resolve(tmdb_id, media_type, season, episode)
-        if result:
+        if self._accept(result):
             return result
         logger.info("Mapple unavailable, falling back to vidsrc domains")
 
@@ -346,7 +405,7 @@ class MultiDomainResolver(StreamProvider):
             logger.info("Trying domain: %s", domain)
             try:
                 result = base._resolve_domain(domain, tmdb_id, media_type, season, episode)
-                if result:
+                if self._accept(result):
                     logger.info("Resolved stream from %s", domain)
                     return result
             except Exception as e:

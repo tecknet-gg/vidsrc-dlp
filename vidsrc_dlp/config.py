@@ -14,6 +14,7 @@ class Config:
     tv_dir: Path
     quality: str = "1080p"
     no_confirm: bool = False
+    quality_gate: bool = True
 
 
 def load_config(
@@ -51,4 +52,5 @@ def load_config(
         tv_dir=resolved_tv,
         quality=quality or "1080p",
         no_confirm=no_confirm,
+        quality_gate=True,
     )

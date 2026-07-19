@@ -11,6 +11,9 @@ from vidsrc_dlp.utils import Media, MediaType, StreamInfo
 
 logger = logging.getLogger("vidsrc_dlp.downloader")
 
+MIN_MOVIE_BYTES = 100 * 1024 * 1024  # 100 MB
+MIN_TV_BYTES = 10 * 1024 * 1024      # 10 MB
+
 
 @dataclass
 class VideoDownloader:
@@ -20,7 +23,6 @@ class VideoDownloader:
         return self._list_formats_for_url(stream.url, stream)
 
     def format_summary(self, stream: StreamInfo | None) -> str | None:
-        """Describe available qualities as a human-readable string."""
         if not stream:
             return None
         formats = self.list_formats(stream)
@@ -35,6 +37,47 @@ class VideoDownloader:
                 note = f.get("format_note") or f"{h}p"
                 parts.append(note)
         return ", ".join(parts) if parts else None
+
+    def _estimate_total_bytes(self, stream: StreamInfo) -> int | None:
+        target_url = self._pick_best_url(stream)
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "http_headers": {
+                "User-Agent": stream.headers.get(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                ),
+                "Referer": stream.referer or stream.url,
+            },
+        }
+        try:
+            with yt_dlp.YoutubeDL({**opts, "format": self._build_format_spec()}) as ydl:
+                info = ydl.extract_info(target_url, download=False)
+            return info.get("filesize_approx") or info.get("filesize")
+        except Exception:
+            return None
+
+    def _check_quality_gate(
+        self, stream: StreamInfo, media: Media
+    ) -> bool:
+        if not self.config.quality_gate:
+            return True
+        threshold = MIN_MOVIE_BYTES if media.media_type == MediaType.MOVIE else MIN_TV_BYTES
+        estimated = self._estimate_total_bytes(stream)
+        if estimated is None:
+            logger.info("Quality gate: unable to estimate size, proceeding anyway")
+            return True
+        if estimated < threshold:
+            logger.warning(
+                "Quality gate: estimated size %.1f MB is below %.0f MB threshold — rejecting stream",
+                estimated / 1024 / 1024, threshold / 1024 / 1024,
+            )
+            return False
+        logger.info(
+            "Quality gate: estimated size %.1f MB passes threshold", estimated / 1024 / 1024,
+        )
+        return True
 
     def _pick_best_url(self, stream: StreamInfo) -> str:
         urls = stream.urls or [stream.url]
@@ -93,6 +136,9 @@ class VideoDownloader:
 
         output_dir.mkdir(parents=True, exist_ok=True)
         output_template = str(output_dir / f"{filename}.%(ext)s")
+
+        if not self._check_quality_gate(stream, media):
+            return False
 
         target_url = self._pick_best_url(stream)
         logger.info("Download URL: %s...", target_url[:100])
