@@ -409,6 +409,7 @@ class VidsrcWinResolver(StreamProvider):
         return f"{base}{url}"
 
 
+
 @dataclass
 class CinebyResolver(StreamProvider):
     base_url: str = "https://www.cineby.at/movie"
