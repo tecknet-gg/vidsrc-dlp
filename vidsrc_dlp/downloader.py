@@ -17,37 +17,7 @@ class VideoDownloader:
     config: Config
 
     def list_formats(self, stream: StreamInfo) -> list[dict]:
-        """Inspect the stream and return available video formats.
-
-        Each format dict contains keys like:
-            format_id, height, width, vcodec, acodec, tbr, filesize,
-            format_note (e.g. "1080p"), ext
-        """
-        quiet = not logger.isEnabledFor(logging.DEBUG)
-        opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "http_headers": {
-                "User-Agent": stream.headers.get(
-                    "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                ),
-                "Referer": stream.referer or stream.url,
-            },
-        }
-        try:
-            with yt_dlp.YoutubeDL({**opts, "quiet": quiet}) as ydl:
-                info = ydl.extract_info(stream.url, download=False)
-            formats = info.get("formats", []) if info else []
-            videos = sorted(
-                (f for f in formats if f.get("vcodec") and f.get("vcodec") != "none"),
-                key=lambda f: f.get("height") or 0,
-                reverse=True,
-            )
-            return videos
-        except Exception as e:
-            logger.debug("Format detection failed: %s", e)
-            return []
+        return self._list_formats_for_url(stream.url, stream)
 
     def format_summary(self, stream: StreamInfo | None) -> str | None:
         """Describe available qualities as a human-readable string."""
@@ -66,6 +36,55 @@ class VideoDownloader:
                 parts.append(note)
         return ", ".join(parts) if parts else None
 
+    def _pick_best_url(self, stream: StreamInfo) -> str:
+        urls = stream.urls or [stream.url]
+        if len(urls) <= 1:
+            return stream.url
+
+        best_url = stream.url
+        best_height = 0
+        for url in urls:
+            formats = self._list_formats_for_url(url, stream)
+            max_h = max(
+                (f.get("height") or 0 for f in formats if f.get("height")),
+                default=0,
+            )
+            if max_h > best_height:
+                best_height = max_h
+                best_url = url
+        if best_url != stream.url:
+            logger.info(
+                "Selected best quality URL (%dp) over default", best_height
+            )
+        return best_url
+
+    def _list_formats_for_url(
+        self, url: str, stream: StreamInfo
+    ) -> list[dict]:
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "http_headers": {
+                "User-Agent": stream.headers.get(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                ),
+                "Referer": stream.referer or stream.url,
+            },
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            formats = info.get("formats", []) if info else []
+            return [
+                f
+                for f in formats
+                if f.get("vcodec") and f.get("vcodec") != "none"
+            ]
+        except Exception as e:
+            logger.debug("Format detection failed for %s: %s", url[:80], e)
+            return []
+
     def download(self, stream: StreamInfo, media: Media) -> bool:
         if media.media_type == MediaType.TV:
             output_dir, filename = self._tv_path(media)
@@ -74,6 +93,9 @@ class VideoDownloader:
 
         output_dir.mkdir(parents=True, exist_ok=True)
         output_template = str(output_dir / f"{filename}.%(ext)s")
+
+        target_url = self._pick_best_url(stream)
+        logger.info("Download URL: %s...", target_url[:100])
 
         fmt = self._build_format_spec()
         logger.info("Format: %s", fmt)
@@ -107,7 +129,7 @@ class VideoDownloader:
         try:
             logger.info("Downloading %s", filename)
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([stream.url])
+                ydl.download([target_url])
             logger.info("Download complete: %s", filename)
             return True
         except yt_dlp.utils.DownloadError as e:

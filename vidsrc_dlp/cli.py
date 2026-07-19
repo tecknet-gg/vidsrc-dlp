@@ -5,7 +5,7 @@ import logging
 
 from vidsrc_dlp.config import load_config
 from vidsrc_dlp.downloader import VideoDownloader
-from vidsrc_dlp.resolver import VidSrcResolver
+from vidsrc_dlp.resolver import MultiDomainResolver, VidSrcResolver
 from vidsrc_dlp.tmdb import TMDBClient
 from vidsrc_dlp.utils import MediaType, setup_logging
 
@@ -22,11 +22,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--season", type=int, help="Season number (for TV)")
     parser.add_argument("--episode", type=int, help="Episode number (for TV)")
     parser.add_argument("--year", type=int, help="Filter by release year")
-    parser.add_argument("--quality", default="best", help="Quality (e.g. 1080p, 720p, best)")
+    parser.add_argument("--quality", default="1080p", help="Quality (e.g. 1080p, 720p, best for highest available)")
     parser.add_argument("--movies-dir", help="Override movies output directory")
     parser.add_argument("--tv-dir", help="Override TV output directory")
     parser.add_argument("--no-confirm", action="store_true", help="Skip confirmation prompt")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    parser.add_argument("--provider", choices=["auto", "vidsrc"], default="auto",
+                        help="Stream provider (default: auto - tries multiple sources for best quality)")
     parser.add_argument("--verbose-ytdlp", action="store_true", help="Show yt-dlp output")
     return parser.parse_args(argv)
 
@@ -101,7 +103,12 @@ def main(argv: list[str] | None = None) -> None:
             logger.info("Skipped.")
             return
 
-    resolver = VidSrcResolver()
+    if args.provider == "vidsrc":
+        resolver = VidSrcResolver()
+        logger.info("Using vidsrc.to provider (single source)")
+    else:
+        resolver = MultiDomainResolver()
+        logger.info("Using auto provider (trying multiple sources for best quality)")
     stream = resolver.resolve(
         best.id,
         media_type=args.type,

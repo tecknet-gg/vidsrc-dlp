@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import requests
 
@@ -39,13 +39,14 @@ class VidSrcResolver(StreamProvider):
             "Resolving TMDB ID %d (%s) via %s", tmdb_id, media_type, self.base_domain
         )
         try:
-            return self._resolve(tmdb_id, media_type, season, episode)
+            return self._resolve_domain(self.base_domain, tmdb_id, media_type, season, episode)
         except Exception as e:
             logger.error("Resolution failed: %s", e)
             return None
 
-    def _resolve(
+    def _resolve_domain(
         self,
+        domain: str,
         tmdb_id: int,
         media_type: str,
         season: int | None,
@@ -55,19 +56,15 @@ class VidSrcResolver(StreamProvider):
         session.headers.update(HEADERS)
 
         if media_type == "tv" and season is not None and episode is not None:
-            embed_url = (
-                f"https://{self.base_domain}/embed/tv/{tmdb_id}/{season}/{episode}"
-            )
+            embed_url = f"https://{domain}/embed/tv/{tmdb_id}/{season}/{episode}"
         else:
-            embed_url = f"https://{self.base_domain}/embed/movie/{tmdb_id}"
+            embed_url = f"https://{domain}/embed/movie/{tmdb_id}"
 
         r1 = session.get(embed_url, timeout=15)
         vsembed_url = self._extract_vsembed(r1.text, embed_url)
         if not vsembed_url:
             logger.error("No vsembed iframe found on %s", embed_url)
             return None
-        logger.info("Step 1: %s", vsembed_url)
-        time.sleep(self.request_delay)
 
         r2 = session.get(vsembed_url, headers={"Referer": embed_url}, timeout=15)
         hashes = re.findall(r'data-hash=["\']([A-Za-z0-9+/=_-]+)["\']', r2.text)
@@ -75,15 +72,11 @@ class VidSrcResolver(StreamProvider):
             logger.error("No data-hash found on vsembed")
             return None
         logger.info("Step 2: %d source hash(es) found", len(hashes))
-        time.sleep(self.request_delay)
 
         for i, h in enumerate(hashes):
-            logger.debug("Trying source %d/%d", i + 1, len(hashes))
             result = self._resolve_source(session, h, vsembed_url)
             if result:
-                logger.info("Stream resolved from source %d", i + 1)
                 return result
-            time.sleep(self.request_delay)
 
         logger.error("All %d sources failed", len(hashes))
         return None
@@ -101,8 +94,6 @@ class VidSrcResolver(StreamProvider):
         if not prorcp:
             logger.warning("No prorcp hash in RCP response")
             return None
-        logger.debug("Step 3: prorcp hash found")
-        time.sleep(self.request_delay)
 
         prorcp_url = f"https://cloudorchestranova.com/prorcp/{prorcp.group(1)}"
         r4 = session.get(
@@ -116,8 +107,6 @@ class VidSrcResolver(StreamProvider):
         if not m3u8_urls:
             logger.warning("No m3u8 URLs in prorcp response")
             return None
-        logger.debug("Step 4: %d raw m3u8 URL(s) found", len(m3u8_urls))
-        time.sleep(self.request_delay)
 
         token_main = self._fetch_token(
             session, "https://peregrinepalaver.space/generate.php", rcp_url
@@ -125,8 +114,8 @@ class VidSrcResolver(StreamProvider):
         token_pg = self._fetch_token(
             session, "https://app2.putgate.com/generate.php", rcp_url
         )
-        logger.debug("Step 5: tokens resolved")
 
+        valid_urls: list[str] = []
         for raw_url in m3u8_urls:
             resolved = raw_url
             if token_main:
@@ -134,15 +123,19 @@ class VidSrcResolver(StreamProvider):
             if token_pg:
                 resolved = resolved.replace("__TOKENPG__", token_pg)
             if "{v" not in resolved:
-                return StreamInfo(
-                    url=resolved,
-                    headers={"User-Agent": HEADERS["User-Agent"]},
-                    referer="https://cloudorchestranova.com/",
-                    stream_type="hls",
-                )
+                valid_urls.append(resolved)
 
-        logger.warning("All m3u8 URLs had unresolved placeholders")
-        return None
+        if not valid_urls:
+            logger.warning("All m3u8 URLs had unresolved placeholders")
+            return None
+
+        return StreamInfo(
+            url=valid_urls[0],
+            urls=valid_urls,
+            headers={"User-Agent": HEADERS["User-Agent"]},
+            referer="https://cloudorchestranova.com/",
+            stream_type="hls",
+        )
 
     @staticmethod
     def _extract_vsembed(html: str, page_url: str) -> str | None:
@@ -166,4 +159,183 @@ class VidSrcResolver(StreamProvider):
                 return r.text.strip()
         except requests.RequestException:
             pass
+        return None
+
+
+@dataclass
+class MappleResolver(StreamProvider):
+    api_key: str = "mptv_sk_a8f29c4e7b3d1f"
+    api_base: str = "https://mapple.rip/api"
+    timeout: int = 15
+
+    def resolve(
+        self,
+        tmdb_id: int,
+        media_type: str = "movie",
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> StreamInfo | None:
+        logger.info("Resolving TMDB ID %d (%s) via Mapple (4KHD)", tmdb_id, media_type)
+        try:
+            params = {
+                "mediaId": tmdb_id,
+                "mediaType": media_type,
+                "source": "mapple",
+                "apikey": self.api_key,
+            }
+            if media_type == "tv":
+                params["season"] = season or 1
+                params["episode"] = episode or 1
+
+            r = requests.get(
+                f"{self.api_base}/stream",
+                params=params,
+                headers={
+                    "User-Agent": HEADERS["User-Agent"],
+                    "Referer": f"https://mapple.uk/watch/{media_type}/{tmdb_id}",
+                    "Origin": "https://mapple.uk",
+                },
+                timeout=self.timeout,
+            )
+            if r.status_code != 200:
+                logger.warning("Mapple API returned %d", r.status_code)
+                return None
+
+            data = r.json()
+            if not data.get("success"):
+                logger.warning("Mapple API returned unsuccessful: %s", data)
+                return None
+
+            stream_url = data["data"]["stream_url"]
+            logger.info("Mapple resolved stream (1080p available)")
+
+            return StreamInfo(
+                url=stream_url,
+                headers={"User-Agent": HEADERS["User-Agent"]},
+                referer="https://mapple.uk/",
+                stream_type="hls",
+            )
+        except Exception as e:
+            logger.error("Mapple resolution failed: %s", e)
+            return None
+
+
+@dataclass
+class CinebyResolver(StreamProvider):
+    base_url: str = "https://www.cineby.at/movie"
+    timeout: int = 60
+    stream_domains: tuple = ("moon.ironwallnet.net", "checknews02.site", "randomseg01.site")
+
+    def resolve(
+        self,
+        tmdb_id: int,
+        media_type: str = "movie",
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> StreamInfo | None:
+        logger.info("Resolving TMDB ID %d (%s) via Cineby (4K)", tmdb_id, media_type)
+        try:
+            return self._resolve_with_playwright(tmdb_id, media_type, season, episode)
+        except ImportError:
+            logger.warning("Playwright not installed. Install with: pip install playwright && playwright install chromium")
+            return None
+        except Exception as e:
+            logger.error("Cineby resolution failed: %s", e)
+            return None
+
+    def _resolve_with_playwright(
+        self,
+        tmdb_id: int,
+        media_type: str,
+        season: int | None,
+        episode: int | None,
+    ) -> StreamInfo | None:
+        from playwright.async_api import async_playwright
+        import asyncio
+
+        url = f"{self.base_url}/{tmdb_id}?play=true"
+
+        async def _run():
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+
+                m3u8_urls: list[str] = []
+
+                async def on_response(response):
+                    res_url = response.url
+                    ct = response.headers.get("content-type", "")
+                    if "application/vnd.apple.mpegurl" in ct:
+                        m3u8_urls.append(res_url)
+
+                page.on("response", on_response)
+
+                await page.goto(url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
+                await asyncio.sleep(8)
+
+                await browser.close()
+
+                return m3u8_urls
+
+        m3u8_urls = asyncio.run(_run())
+
+        if not m3u8_urls:
+            logger.warning("No m3u8 streams captured from Cineby")
+            return None
+
+        logger.info("Cineby resolved 4K stream")
+
+        return StreamInfo(
+            url=m3u8_urls[0],
+            headers={"User-Agent": HEADERS["User-Agent"]},
+            referer="https://www.cineby.at/",
+            stream_type="hls",
+        )
+
+
+@dataclass
+class MultiDomainResolver(StreamProvider):
+    domains: list[str] = field(default_factory=lambda: [
+        "vidsrc.su",
+        "vidsrc.to",
+        "vidsrcme.ru",
+    ])
+    request_delay: float = 0.3
+    timeout: int = 30
+
+    def resolve(
+        self,
+        tmdb_id: int,
+        media_type: str = "movie",
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> StreamInfo | None:
+        logger.info(
+            "Resolving TMDB ID %d (%s) with auto provider", tmdb_id, media_type,
+        )
+
+        cineby = CinebyResolver()
+        result = cineby.resolve(tmdb_id, media_type, season, episode)
+        if result:
+            return result
+        logger.info("Cineby unavailable, trying Mapple")
+
+        mapple = MappleResolver()
+        result = mapple.resolve(tmdb_id, media_type, season, episode)
+        if result:
+            return result
+        logger.info("Mapple unavailable, falling back to vidsrc domains")
+
+        logger.info("Trying %d vidsrc domains: %s", len(self.domains), self.domains)
+        base = VidSrcResolver(request_delay=self.request_delay, timeout=self.timeout)
+        for domain in self.domains:
+            logger.info("Trying domain: %s", domain)
+            try:
+                result = base._resolve_domain(domain, tmdb_id, media_type, season, episode)
+                if result:
+                    logger.info("Resolved stream from %s", domain)
+                    return result
+            except Exception as e:
+                logger.debug("Domain %s failed: %s", domain, e)
+        logger.error("All resolution attempts failed")
         return None

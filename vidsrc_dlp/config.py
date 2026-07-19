@@ -12,7 +12,7 @@ class Config:
     tmdb_api_key: str
     movies_dir: Path
     tv_dir: Path
-    quality: str = "best"
+    quality: str = "1080p"
     no_confirm: bool = False
 
 
@@ -49,6 +49,6 @@ def load_config(
         tmdb_api_key=api_key,
         movies_dir=resolved_movies,
         tv_dir=resolved_tv,
-        quality=quality or "best",
+        quality=quality or "1080p",
         no_confirm=no_confirm,
     )

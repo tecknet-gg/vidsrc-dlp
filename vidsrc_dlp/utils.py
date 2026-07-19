@@ -32,6 +32,7 @@ class StreamInfo:
     headers: dict[str, str] = field(default_factory=dict)
     referer: str = ""
     stream_type: str = "hls"
+    urls: list[str] = field(default_factory=list)
 
 
 class StreamProvider(ABC):

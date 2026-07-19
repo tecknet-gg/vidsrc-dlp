@@ -1,4 +1,5 @@
 .env.example
+LICENSE
 MANIFEST.in
 README.md
 pyproject.toml
