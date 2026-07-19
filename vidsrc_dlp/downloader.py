@@ -133,6 +133,13 @@ class VideoDownloader:
             logger.debug("Format detection failed for %s: %s", url[:80], e)
             return []
 
+    def _purge_partial_files(self, directory: Path, filename: str) -> None:
+        """Delete partial download artifacts for a given filename."""
+        for p in directory.iterdir():
+            if p.name.startswith(filename):
+                logger.warning("Purging partial file: %s", p.name)
+                p.unlink(missing_ok=True)
+
     def download(self, stream: StreamInfo, media: Media) -> bool:
         if media.media_type == MediaType.TV:
             output_dir, filename = self._tv_path(media)
@@ -236,6 +243,26 @@ class VideoDownloader:
                     if attempt < MAX_STALL_RETRIES:
                         time.sleep(STALL_BACKOFF_SLEEP)
                         continue
+                    logger.warning(
+                        "All retries exhausted — purging partial files and "
+                        "restarting from scratch with 1 worker",
+                    )
+                    time.sleep(STALL_BACKOFF_SLEEP)
+                    self._purge_partial_files(output_dir, filename)
+                    try:
+                        ydl_opts["concurrent_fragments"] = 1
+                        ydl_opts["progress_hooks"] = [_make_stall_hook(1)]
+                        logger.info("Clean restart with 1 worker")
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            ydl.download([target_url])
+                        logger.info("Download complete: %s", filename)
+                        return True
+                    except yt_dlp.utils.DownloadError as e2:
+                        logger.error("Clean restart also failed: %s", e2)
+                        return False
+                    except Exception as e2:
+                        logger.error("Clean restart error: %s", e2)
+                        return False
                 logger.error("Download failed: %s", e)
                 return False
             except Exception as e:
