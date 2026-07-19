@@ -11,6 +11,20 @@ from vidsrc_dlp.utils import StreamInfo, StreamProvider
 
 logger = logging.getLogger("vidsrc_dlp.resolver")
 
+
+def _run_async(coro):
+    """Run an async coroutine, handling both no-loop and running-loop contexts."""
+    import asyncio
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, coro)
+        return future.result()
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -277,7 +291,7 @@ class CinebyResolver(StreamProvider):
 
                 return m3u8_urls
 
-        m3u8_urls = asyncio.run(_run())
+        m3u8_urls = _run_async(_run())
 
         if not m3u8_urls:
             logger.warning("No m3u8 streams captured from Cineby")
