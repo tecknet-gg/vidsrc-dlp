@@ -150,6 +150,7 @@ class VideoDownloader:
             "format": fmt,
             "outtmpl": output_template,
             "merge_output_format": "mp4",
+            "concurrent_fragments": self.config.concurrent_fragments,
             "http_headers": {
                 "User-Agent": stream.headers.get(
                     "User-Agent",

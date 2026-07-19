@@ -47,6 +47,7 @@ cp .env.example .env  # add your TMDB_API_KEY
 | `--movies-dir` | `str` | from `.env` | Override movie output directory |
 | `--tv-dir` | `str` | from `.env` | Override TV output directory |
 | `--no-confirm` | flag | — | Skip download confirmation prompt |
+| `--parallel` | `int` | `3` | Download N HLS fragments concurrently (0 = sequential). Speeds up larger downloads |
 | `--verbose` | flag | — | Enable debug logging |
 | `--verbose-ytdlp` | flag | — | Show yt-dlp output |
 
@@ -71,6 +72,11 @@ vidsrc-dlp "Breaking Bad" --type tv --season 1 --episode 1 --tv-dir "/Volumes/Me
 
 # Debug mode
 vidsrc-dlp "Inception" --verbose --no-confirm
+
+# Parallel fragment download (default: 3 concurrent)
+vidsrc-dlp "Inception"                            # 3 concurrent (default)
+vidsrc-dlp "Inception" --parallel 8                # 8 concurrent for faster downloads
+vidsrc-dlp "Inception" --parallel 0                # sequential (one fragment at a time)
 ```
 
 ### Quality selection

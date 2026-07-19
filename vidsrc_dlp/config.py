@@ -15,6 +15,7 @@ class Config:
     quality: str = "1080p"
     no_confirm: bool = False
     quality_gate: bool = True
+    concurrent_fragments: int = 3
 
 
 def load_config(
@@ -23,6 +24,7 @@ def load_config(
     tv_dir: str | None = None,
     quality: str | None = None,
     no_confirm: bool = False,
+    concurrent_fragments: int | None = None,
 ) -> Config:
     load_dotenv()
 
@@ -53,4 +55,5 @@ def load_config(
         quality=quality or "1080p",
         no_confirm=no_confirm,
         quality_gate=True,
+        concurrent_fragments=concurrent_fragments if concurrent_fragments is not None else 3,
     )
