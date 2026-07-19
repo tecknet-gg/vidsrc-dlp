@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import signal
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,9 +18,11 @@ logger = logging.getLogger("vidsrc_dlp.downloader")
 MIN_MOVIE_BYTES = 100 * 1024 * 1024  # 100 MB
 MIN_TV_BYTES = 10 * 1024 * 1024      # 10 MB
 
-STALL_BACKOFF_SLEEP = 45     # sleep 45s before retrying
-MAX_STALL_RETRIES = 3
-INITIAL_WORKERS = 8           # start at 8 concurrent fragments
+STALL_BACKOFF_SLEEP = 45
+INITIAL_WORKERS = 8
+PURGE_IDLE_THRESHOLD = 600  # 10 minutes of cumulative idle before purge
+SCALE_UP_SPEED = 1_000_000  # 1 MB/s sustained triggers worker scale-up
+SCALE_UP_WINDOW = 6          # number of speed samples (~90s) to check
 
 
 @dataclass
@@ -158,7 +163,31 @@ class VideoDownloader:
         fmt = self._build_format_spec()
         logger.info("Format: %s", fmt)
 
-        def _make_stall_hook(workers: int):
+        # Shared state between hook, monitor thread, and main loop
+        class DownloadState:
+            def __init__(self):
+                self.speed_history: list[float] = []
+                self.lock = threading.Lock()
+                self.total_bytes: float = 0
+                self.downloaded: float = 0
+
+            def record(self, speed: float, total: float, downloaded: float) -> None:
+                with self.lock:
+                    self.total_bytes = total
+                    self.downloaded = downloaded
+                    if speed > 0:
+                        self.speed_history.append(speed)
+                        if len(self.speed_history) > 30:
+                            self.speed_history.pop(0)
+
+            def recent_avg(self, n: int = SCALE_UP_WINDOW) -> float:
+                with self.lock:
+                    samples = self.speed_history[-n:]
+                    return sum(samples) / len(samples) if samples else 0.0
+
+        state = DownloadState()
+
+        def _make_hook(workers: int):
             last_tick = [time.time()]
             last_bytes = [0.0]
 
@@ -166,9 +195,11 @@ class VideoDownloader:
                 if d["status"] == "downloading":
                     total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
                     downloaded = d.get("downloaded_bytes", 0)
-                    speed = d.get("speed", 0)
+                    speed = d.get("speed", 0) or 0
 
-                    if total > 0 and speed:
+                    state.record(speed, total, downloaded)
+
+                    if total > 0 and speed > 0:
                         pct = downloaded / total * 100
                         rate = speed / 1024 / 1024
                         logger.info(
@@ -218,59 +249,84 @@ class VideoDownloader:
             "ignoreerrors": False,
         }
 
-        for attempt in range(1, MAX_STALL_RETRIES + 1):
-            workers = max(1, INITIAL_WORKERS // (2 ** (attempt - 1)))
+        cumulative_idle = 0.0
+        scale_up_flag = threading.Event()
+
+        def _scale_up_monitor(workers: list[int]) -> None:
+            while not scale_up_flag.is_set():
+                time.sleep(15)
+                if workers[0] >= INITIAL_WORKERS:
+                    continue
+                avg = state.recent_avg(SCALE_UP_WINDOW)
+                if avg > SCALE_UP_SPEED:
+                    logger.info(
+                        "Throughput recovered (%.1f MB/s avg at %d workers) — scaling up",
+                        avg / 1024 / 1024, workers[0],
+                    )
+                    scale_up_flag.set()
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    return
+
+        current_workers: list[int] = [INITIAL_WORKERS]
+
+        while True:
+            workers = current_workers[0]
             ydl_opts = {**ydl_base_opts, "concurrent_fragments": workers}
-            ydl_opts["progress_hooks"] = [_make_stall_hook(workers)]
+            ydl_opts["progress_hooks"] = [_make_hook(workers)]
+
+            scale_up_flag.clear()
+            monitor = threading.Thread(
+                target=_scale_up_monitor, args=(current_workers,), daemon=True,
+            )
+            monitor.start()
 
             try:
                 logger.info(
-                    "Downloading %s with %d concurrent fragments (attempt %d/%d)",
-                    filename, workers, attempt, MAX_STALL_RETRIES,
+                    "Downloading %s with %d concurrent fragments "
+                    "(idle=%.0fs, purge at %.0fs)",
+                    filename, workers, cumulative_idle, PURGE_IDLE_THRESHOLD,
                 )
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([target_url])
                 logger.info("Download complete: %s", filename)
                 return True
             except yt_dlp.utils.DownloadError as e:
+                if scale_up_flag.is_set():
+                    new_workers = min(INITIAL_WORKERS, workers * 2)
+                    logger.info("Scaling up workers: %d → %d", workers, new_workers)
+                    current_workers[0] = new_workers
+                    continue
+
                 msg = str(e).lower()
                 if "throttl" in msg or "too slow" in msg:
+                    cumulative_idle += STALL_BACKOFF_SLEEP
+                    new_workers = max(1, workers // 2)
                     logger.warning(
-                        "Download throttled with %d workers (attempt %d/%d). "
-                        "Sleeping %ds then reducing workers...",
-                        workers, attempt, MAX_STALL_RETRIES, STALL_BACKOFF_SLEEP,
+                        "Throttled at %d workers (idle=%.0fs). "
+                        "Sleeping %ds, reducing to %d workers",
+                        workers, cumulative_idle, STALL_BACKOFF_SLEEP, new_workers,
                     )
-                    if attempt < MAX_STALL_RETRIES:
-                        time.sleep(STALL_BACKOFF_SLEEP)
-                        continue
-                    logger.warning(
-                        "All retries exhausted — purging partial files and "
-                        "restarting from scratch with 1 worker",
-                    )
+                    current_workers[0] = new_workers
+
+                    if cumulative_idle >= PURGE_IDLE_THRESHOLD:
+                        logger.warning(
+                            "Cumulative idle %.0fs exceeds %ds — "
+                            "purging partial files and restarting fresh",
+                            cumulative_idle, PURGE_IDLE_THRESHOLD,
+                        )
+                        self._purge_partial_files(output_dir, filename)
+                        cumulative_idle = 0.0
+                        current_workers[0] = INITIAL_WORKERS
+
                     time.sleep(STALL_BACKOFF_SLEEP)
-                    self._purge_partial_files(output_dir, filename)
-                    try:
-                        ydl_opts["concurrent_fragments"] = 1
-                        ydl_opts["progress_hooks"] = [_make_stall_hook(1)]
-                        logger.info("Clean restart with 1 worker")
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            ydl.download([target_url])
-                        logger.info("Download complete: %s", filename)
-                        return True
-                    except yt_dlp.utils.DownloadError as e2:
-                        logger.error("Clean restart also failed: %s", e2)
-                        return False
-                    except Exception as e2:
-                        logger.error("Clean restart error: %s", e2)
-                        return False
+                    continue
                 logger.error("Download failed: %s", e)
                 return False
             except Exception as e:
                 logger.error("Unexpected error: %s", e)
                 return False
-
-        logger.error("Download failed after %d attempts", MAX_STALL_RETRIES)
-        return False
+            finally:
+                scale_up_flag.set()
 
     def _movie_path(self, media: Media) -> tuple[Path, str]:
         label = self._media_label(media)
