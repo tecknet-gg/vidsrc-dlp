@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vidsrc-dlp"
-version = "0.12.0"
+version = "0.12.1"
 description = "CLI to search TMDB, resolve VidSrc streams, and download via yt-dlp"
 readme = "README.md"
 license = "MIT"

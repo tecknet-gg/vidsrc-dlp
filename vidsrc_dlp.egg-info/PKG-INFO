@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: vidsrc-dlp
-Version: 0.10.0
+Version: 0.12.1
 Summary: CLI to search TMDB, resolve VidSrc streams, and download via yt-dlp
 Author: Jeevan
 License-Expression: MIT
@@ -70,7 +70,7 @@ cp .env.example .env  # add your TMDB_API_KEY
 | `--type` | `movie` / `tv` | `movie` | Media type |
 | `--year` | `int` | — | Filter by release / air year |
 | `--quality` | `str` | `1080p` | Target resolution. `best` = highest available (may be very large). E.g. `1080p`, `720p` |
-| `--provider` | `auto` / `vidsrc` | `auto` | `auto` tries Cineby → Mapple → vidsrc. `vidsrc` uses legacy single-domain |
+| `--provider` | `auto` / `vidsrc` | `auto` | `auto` tries 15 Playwright sources → Cineby → legacy vidsrc. `vidsrc` uses legacy single-domain |
 | `--season` | `int` | — | Season number (required for TV) |
 | `--episode` | `int` | — | Episode number (required for TV) |
 | `--movies-dir` | `str` | from `.env` | Override movie output directory |
@@ -122,11 +122,11 @@ Pass `--quality 720p` or `--quality 480p` to constrain further.
 ### Provider selection
 
 `--provider auto` (default) tries in order:
-1. **Cineby** — requires Playwright, up to 4K@16Mbps
-2. **Mapple** — no browser needed, up to 1080p@8Mbps
+1. **Vidsrc.win sources** — 15 Playwright-based embed sources (videasy, vidking, mapple, vidsrcme, vidsrc.su, vidsrc.cc, etc.), up to 4K
+2. **Cineby** — requires Playwright, up to 4K@16Mbps
 3. **vidsrc** — legacy scrape, up to 800p
 
-If Playwright is not installed, Cineby is skipped automatically.
+If Playwright is not installed, steps 1 and 2 are skipped automatically.
 
 ### `.env` configuration
 
@@ -331,13 +331,29 @@ download(stream, movies[0], movies_dir="/custom/path")
 ┌─────────────┐    ┌──────────────────────────────────────┐    ┌────────────┐
 │   TMDB API  │───▶│  Multi-Provider Stream Resolver      │───▶│  yt-dlp    │
 └─────────────┘    │                                      │    │  + ffmpeg  │
-                   │  1. Cineby (Playwright, 4K@16Mbps)   │    └────────────┘
-                   │  2. Mapple  (direct API, 1080p@8Mbps)│
-                   │  3. vidsrc  (legacy scrape, 800p)     │
+                   │  1. Vidsrc.win (15 Playwright sources)│    └────────────┘
+                   │  2. Cineby   (Playwright, 4K@16Mbps) │
+                   │  3. vidsrc   (legacy scrape, 800p)   │
                    └──────────────────────────────────────┘
 ```
 
 ## How the resolvers work
+
+### Vidsrc.win (up to 4K, requires Playwright)
+```
+vidsrc.win React SPA contains 40+ hardcoded embed sources
+  → 15 most reliable extracted and ranked:
+    1. 4K      (player.videasy.net)
+    2. 4K2     (www.vidking.net/embed)
+    3. 4KHD    (mapple.uk/watch)
+    4–15. vidsrcme, vidsrc.su, vidsrc.cc, vidrush,
+          vidlink, anyembed, autoembed, rivestream,
+          vidify, vidzee, vidplus, …
+  → each source gets a Playwright headless Chromium browser
+    → anti-detection (stealth + --disable-blink-features)
+    → response interception for application/vnd.apple.mpegurl
+    → returns first captured m3u8 URL
+```
 
 ### Cineby (4K, requires Playwright)
 ```

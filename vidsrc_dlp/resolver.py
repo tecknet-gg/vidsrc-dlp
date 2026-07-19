@@ -275,7 +275,7 @@ class VidSrcResolver(StreamProvider):
 
 @dataclass
 class VidsrcWinResolver(StreamProvider):
-    timeout: int = 45
+    timeout: int = 60
 
     def resolve(
         self,
@@ -284,7 +284,7 @@ class VidsrcWinResolver(StreamProvider):
         season: int | None = None,
         episode: int | None = None,
     ) -> StreamInfo | None:
-        logger.info("Resolving TMDB ID %d (%s) via Vidsrc.win", tmdb_id, media_type)
+        logger.info("Resolving TMDB ID %d (%s) via Vidsrc.win sources", tmdb_id, media_type)
         try:
             return self._resolve_with_playwright(tmdb_id, media_type, season, episode)
         except ImportError:
@@ -300,73 +300,110 @@ class VidsrcWinResolver(StreamProvider):
         import asyncio
         from playwright.async_api import async_playwright
 
-        if media_type == "tv" and season is not None and episode is not None:
-            url = f"https://vidsrc.win/watch/tv/{tmdb_id}/{season}/{episode}"
-        else:
-            url = f"https://vidsrc.win/watch/{tmdb_id}"
-
-        async def _capture() -> list[str]:
-            try:
-                async with async_playwright() as pw:
-                    browser = await pw.chromium.launch(
-                        headless=True,
-                        args=["--no-sandbox", "--disable-setuid-sandbox",
-                              "--disable-dev-shm-usage", "--disable-gpu"],
-                    )
-                    page = await browser.new_page(viewport={"width": 1920, "height": 1080})
-
-                    m3u8_urls: list[str] = []
-
-                    async def on_response(response):
-                        ct = response.headers.get("content-type", "")
-                        if "application/vnd.apple.mpegurl" in ct:
-                            m3u8_urls.append(response.url)
-
-                    page.on("response", on_response)
-
-                    try:
-                        await page.goto(url, wait_until="domcontentloaded", timeout=25000)
-                    except Exception:
-                        pass
-
-                    await asyncio.sleep(5)
-
-                    for f in page.frames:
-                        if "videasy" in f.url:
-                            try:
-                                btn = await f.query_selector("button")
-                                if btn:
-                                    await btn.click(force=True)
-                                    await asyncio.sleep(10)
-                            except Exception:
-                                pass
-                            break
-
-                    await asyncio.sleep(3)
-
-                    await browser.close()
-                    return m3u8_urls
-            except Exception as e:
-                logger.debug("Vidsrc.win capture error: %s", e)
-                return []
-
+        stealth_cls = None
         try:
-            m3u8_urls = _run_async(_capture())
-        except Exception as e:
-            logger.debug("Vidsrc.win capture error: %s", e)
-            m3u8_urls = []
+            from playwright_stealth import Stealth
+            stealth_cls = Stealth
+        except ImportError:
+            pass
 
-        if not m3u8_urls:
-            logger.warning("No m3u8 streams captured from Vidsrc.win")
-            return None
+        for source in _VSW_SOURCES:
+            embed_url = self._build_url(source, tmdb_id, media_type, season, episode)
 
-        logger.info("Vidsrc.win resolved 4K stream")
-        return StreamInfo(
-            url=m3u8_urls[0],
-            headers={"User-Agent": HEADERS["User-Agent"]},
-            referer="https://vidsrc.win/",
-            stream_type="hls",
-        )
+            async def _capture() -> list[str]:
+                try:
+                    async with async_playwright() as pw:
+                        browser = await pw.chromium.launch(
+                            headless=True,
+                            args=[
+                                "--no-sandbox",
+                                "--disable-setuid-sandbox",
+                                "--disable-dev-shm-usage",
+                                "--disable-gpu",
+                                "--disable-blink-features=AutomationControlled",
+                            ],
+                        )
+                        context = await browser.new_context(
+                            viewport={"width": 1920, "height": 1080},
+                            locale="en-US",
+                            timezone_id="Europe/London",
+                            user_agent=HEADERS["User-Agent"],
+                        )
+                        page = await context.new_page()
+
+                        if stealth_cls:
+                            await stealth_cls().apply_stealth_async(page)
+
+                        m3u8_urls: list[str] = []
+
+                        async def on_response(response):
+                            ct = response.headers.get("content-type", "")
+                            if "application/vnd.apple.mpegurl" in ct or "application/x-mpegURL" in ct:
+                                m3u8_urls.append(response.url)
+
+                        page.on("response", on_response)
+
+                        try:
+                            await page.goto(embed_url, wait_until="domcontentloaded", timeout=20000)
+                        except Exception:
+                            pass
+
+                        try:
+                            cf = await page.query_selector("#cf-wrapper")
+                            if cf:
+                                logger.debug("Source '%s': Cloudflare challenge detected", source["name"])
+                                await browser.close()
+                                return []
+                        except Exception:
+                            pass
+
+                        deadline = asyncio.get_event_loop().time() + 15
+                        while asyncio.get_event_loop().time() < deadline:
+                            if m3u8_urls:
+                                break
+                            await asyncio.sleep(1)
+
+                        await browser.close()
+                        return m3u8_urls
+                except Exception as e:
+                    logger.debug("Source '%s' failed: %s", source["name"], e)
+                    return []
+
+            try:
+                m3u8_urls = _run_async(_capture())
+            except Exception as e:
+                logger.debug("Source '%s' capture error: %s", source["name"], e)
+                m3u8_urls = []
+
+            if m3u8_urls:
+                logger.info("Vidsrc.win resolved stream from '%s'", source["name"])
+                return StreamInfo(
+                    url=m3u8_urls[0],
+                    urls=m3u8_urls,
+                    headers={"User-Agent": HEADERS["User-Agent"]},
+                    referer=source["base"] + "/",
+                    stream_type="hls",
+                )
+
+        logger.warning("No m3u8 streams captured from any Vidsrc.win source")
+        return None
+
+    @staticmethod
+    def _build_url(
+        source: dict[str, str],
+        tmdb_id: int,
+        media_type: str,
+        season: int | None,
+        episode: int | None,
+    ) -> str:
+        base = source["base"].rstrip("/")
+        if media_type == "tv" and season is not None and episode is not None:
+            pattern = source["tv"]
+            url = (
+                pattern.replace("{id}", str(tmdb_id))
+                .replace("{s}", str(season))
+                .replace("{e}", str(episode))
+            )
         else:
             url = source["movie"].replace("{id}", str(tmdb_id))
         return f"{base}{url}"
