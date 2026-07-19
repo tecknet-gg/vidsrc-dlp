@@ -426,13 +426,7 @@ class MultiDomainResolver(StreamProvider):
         result = cineby.resolve(tmdb_id, media_type, season, episode)
         if self._accept(result):
             return result
-        logger.info("Cineby unavailable, trying Mapple")
-
-        mapple = MappleResolver()
-        result = mapple.resolve(tmdb_id, media_type, season, episode)
-        if self._accept(result):
-            return result
-        logger.info("Mapple unavailable, falling back to vidsrc domains")
+        logger.info("Cineby unavailable, falling back to vidsrc domains")
 
         logger.info("Trying %d vidsrc domains: %s", len(self.domains), self.domains)
         base = VidSrcResolver(request_delay=self.request_delay, timeout=self.timeout)
