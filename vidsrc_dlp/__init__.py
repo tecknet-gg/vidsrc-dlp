@@ -22,7 +22,7 @@ from vidsrc_dlp.utils import Media, MediaType, StreamInfo
 
 logger = logging.getLogger("vidsrc_dlp.api")
 
-__version__ = "0.9.2"
+__version__ = "0.10.0"
 __all__ = [
     "Media",
     "MediaType",

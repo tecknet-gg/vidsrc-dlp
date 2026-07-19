@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: vidsrc-dlp
-Version: 0.9.2
+Version: 0.10.0
 Summary: CLI to search TMDB, resolve VidSrc streams, and download via yt-dlp
 Author: Jeevan
 License-Expression: MIT
@@ -342,16 +342,10 @@ download(stream, movies[0], movies_dir="/custom/path")
 ### Cineby (4K, requires Playwright)
 ```
 cineby.at/movie/{tmdb_id}?play=true
-  → Playwright headless Chromium
+  → Playwright headless Chromium (stealth + system Chrome fallback)
     → api.speedracelight.com/seed (Cloudflare bypassed by browser)
       → client-side JS decrypts sources
         → moon.ironwallnet.net/vd/... (4K HLS master playlist)
-```
-
-### Mapple (1080p, no browser)
-```
-mapple.rip/api/stream?mediaId={tmdb_id}&mediaType=movie&source=mapple&apikey=...
-  → source.heistotron.uk/p/... (1080p HLS master playlist)
 ```
 
 ### VidSrc (800p, legacy fallback)

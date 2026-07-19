@@ -177,68 +177,9 @@ class VidSrcResolver(StreamProvider):
 
 
 @dataclass
-class MappleResolver(StreamProvider):
-    api_key: str = "mptv_sk_a8f29c4e7b3d1f"
-    api_base: str = "https://mapple.rip/api"
-    timeout: int = 15
-
-    def resolve(
-        self,
-        tmdb_id: int,
-        media_type: str = "movie",
-        season: int | None = None,
-        episode: int | None = None,
-    ) -> StreamInfo | None:
-        logger.info("Resolving TMDB ID %d (%s) via Mapple (4KHD)", tmdb_id, media_type)
-        try:
-            params = {
-                "mediaId": tmdb_id,
-                "mediaType": media_type,
-                "source": "mapple",
-                "apikey": self.api_key,
-            }
-            if media_type == "tv":
-                params["season"] = season or 1
-                params["episode"] = episode or 1
-
-            r = requests.get(
-                f"{self.api_base}/stream",
-                params=params,
-                headers={
-                    "User-Agent": HEADERS["User-Agent"],
-                    "Referer": f"https://mapple.uk/watch/{media_type}/{tmdb_id}",
-                    "Origin": "https://mapple.uk",
-                },
-                timeout=self.timeout,
-            )
-            if r.status_code != 200:
-                logger.warning("Mapple API returned %d", r.status_code)
-                return None
-
-            data = r.json()
-            if not data.get("success"):
-                logger.warning("Mapple API returned unsuccessful: %s", data)
-                return None
-
-            stream_url = data["data"]["stream_url"]
-            logger.info("Mapple resolved stream (1080p available)")
-
-            return StreamInfo(
-                url=stream_url,
-                headers={"User-Agent": HEADERS["User-Agent"]},
-                referer="https://mapple.uk/",
-                stream_type="hls",
-            )
-        except Exception as e:
-            logger.error("Mapple resolution failed: %s", e)
-            return None
-
-
-@dataclass
 class CinebyResolver(StreamProvider):
     base_url: str = "https://www.cineby.at/movie"
     timeout: int = 60
-    stream_domains: tuple = ("moon.ironwallnet.net", "checknews02.site", "randomseg01.site")
 
     def resolve(
         self,
@@ -254,89 +195,104 @@ class CinebyResolver(StreamProvider):
         try:
             return self._resolve_with_playwright(tmdb_id)
         except ImportError:
-            logger.warning("Playwright not installed. Install with: pip install playwright && playwright install chromium")
+            logger.warning("Playwright not installed. Install with: pip install vidsrc-dlp[playwright] && playwright install chromium")
             return None
         except Exception as e:
             logger.error("Cineby resolution failed: %s", e)
             return None
 
     def _resolve_with_playwright(self, tmdb_id: int) -> StreamInfo | None:
-        from playwright.async_api import async_playwright
         import asyncio
+        from playwright.async_api import async_playwright
 
         url = f"{self.base_url}/{tmdb_id}?play=true"
 
-        async def _capture(retries: int = 2) -> list[str]:
-            from playwright.async_api import async_playwright as _async_pw
+        stealth_cls = None
+        try:
+            from playwright_stealth import Stealth
+            stealth_cls = Stealth
+        except ImportError:
+            pass
 
-            stealth = None
+        async def _try_capture(
+            channel: str | None = None,
+            headless_mode: bool | str = True,
+            attempt_timeout: int = 30,
+        ) -> list[str]:
             try:
-                from playwright_stealth import stealth_async
-                stealth = stealth_async
-            except ImportError:
-                pass
+                async with async_playwright() as pw:
+                    launch_opts = {
+                    "headless": headless_mode,
+                    "args": [
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                }
+                if channel:
+                    launch_opts["channel"] = channel
 
-            for attempt in range(retries):
-                async with _async_pw() as pw:
-                    browser = await pw.chromium.launch(
-                        headless=True,
-                        args=[
-                            "--no-sandbox",
-                            "--disable-setuid-sandbox",
-                            "--disable-dev-shm-usage",
-                            "--disable-gpu",
-                        ],
-                    )
-                    context = await browser.new_context(
-                        viewport={"width": 1920, "height": 1080},
-                        locale="en-US",
-                        user_agent=HEADERS["User-Agent"],
-                    )
-                    page = await context.new_page()
+                browser = await pw.chromium.launch(**launch_opts)
 
-                    if stealth:
-                        await stealth(page)
+                context = await browser.new_context(
+                    viewport={"width": 1920, "height": 1080},
+                    locale="en-US",
+                    timezone_id="Europe/London",
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/126.0.0.0 Safari/537.36"
+                    ),
+                )
+                page = await context.new_page()
 
-                    m3u8_urls: list[str] = []
+                if stealth_cls:
+                    await stealth_cls().apply_stealth_async(page)
 
-                    async def on_response(response):
-                        ct = response.headers.get("content-type", "")
-                        if "application/vnd.apple.mpegurl" in ct:
-                            m3u8_urls.append(response.url)
+                m3u8_urls: list[str] = []
 
-                    page.on("response", on_response)
+                async def on_response(response):
+                    ct = response.headers.get("content-type", "")
+                    if "application/vnd.apple.mpegurl" in ct:
+                        m3u8_urls.append(response.url)
 
-                    try:
-                        await page.goto(url, wait_until="networkidle", timeout=self.timeout * 1000)
-                    except Exception:
-                        await asyncio.sleep(15)
+                page.on("response", on_response)
 
-                    await asyncio.sleep(10)
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                except Exception:
+                    pass
 
-                    # Check for Cloudflare challenge page
-                    try:
-                        cf = await page.query_selector("#cf-wrapper")
-                        if cf:
-                            logger.warning(
-                                "Cineby attempt %d/%d: Cloudflare challenge detected",
-                                attempt + 1, retries,
-                            )
-                            await browser.close()
-                            continue
-                    except Exception:
-                        pass
+                try:
+                    cf = await page.query_selector("#cf-wrapper")
+                    if cf:
+                        logger.debug("Cloudflare challenge detected (%s)", channel or "chromium")
+                        await browser.close()
+                        return []
+                except Exception:
+                    pass
 
-                    await browser.close()
-
+                deadline = asyncio.get_event_loop().time() + attempt_timeout
+                while asyncio.get_event_loop().time() < deadline:
                     if m3u8_urls:
-                        return m3u8_urls
-                    logger.debug(
-                        "Cineby attempt %d/%d: no m3u8s, retrying",
-                        attempt + 1, retries,
-                    )
-            return []
+                        break
+                    await asyncio.sleep(2)
 
-        m3u8_urls = _run_async(_capture())
+                await browser.close()
+                return m3u8_urls
+            except Exception as e:
+                logger.debug("Cineby attempt failed (%s): %s", channel or "chromium", e)
+                return []
+
+        # Attempt 1: normal headless + stealth (25s max)
+        m3u8_urls = _run_async(_try_capture(headless_mode=True, attempt_timeout=25))
+
+        # Attempt 2: try headless shell mode (20s max)
+        if not m3u8_urls:
+            logger.debug("Cineby retry with headless shell")
+            m3u8_urls = _run_async(_try_capture(headless_mode="shell", attempt_timeout=20))
 
         if not m3u8_urls:
             logger.warning("No m3u8 streams captured from Cineby")
