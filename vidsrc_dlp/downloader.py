@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,10 @@ logger = logging.getLogger("vidsrc_dlp.downloader")
 
 MIN_MOVIE_BYTES = 100 * 1024 * 1024  # 100 MB
 MIN_TV_BYTES = 10 * 1024 * 1024      # 10 MB
+
+STALL_BACKOFF_SLEEP = 45     # sleep 45s before retrying
+MAX_STALL_RETRIES = 3
+INITIAL_WORKERS = 8           # start at 8 concurrent fragments
 
 
 @dataclass
@@ -146,11 +151,43 @@ class VideoDownloader:
         fmt = self._build_format_spec()
         logger.info("Format: %s", fmt)
 
-        ydl_opts: dict = {
+        def _make_stall_hook(workers: int):
+            last_tick = [time.time()]
+            last_bytes = [0.0]
+
+            def _hook(d: dict) -> None:
+                if d["status"] == "downloading":
+                    total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
+                    downloaded = d.get("downloaded_bytes", 0)
+                    speed = d.get("speed", 0)
+
+                    if total > 0 and speed:
+                        pct = downloaded / total * 100
+                        rate = speed / 1024 / 1024
+                        logger.info(
+                            "Progress: %.1f%% at %.1f MB/s (%d workers)",
+                            pct, rate, workers,
+                        )
+                    elif total > 0:
+                        pct = downloaded / total * 100
+                        logger.info("Progress: %.1f%% at 0 B/s (%d workers)", pct, workers)
+
+                    now = time.time()
+                    delta = downloaded - last_bytes[0]
+                    elapsed = now - last_tick[0]
+                    if elapsed >= 10 and delta < 1024 * 1024:
+                        logger.debug("Less than 1 MB downloaded in last 10s")
+                    last_tick[0] = now
+                    last_bytes[0] = downloaded
+
+                    self._progress_hook(d)
+
+            return _hook
+
+        ydl_base_opts: dict = {
             "format": fmt,
             "outtmpl": output_template,
             "merge_output_format": "mp4",
-            "concurrent_fragments": self.config.concurrent_fragments,
             "http_headers": {
                 "User-Agent": stream.headers.get(
                     "User-Agent",
@@ -164,27 +201,49 @@ class VideoDownloader:
                     "preferedformat": "mp4",
                 }
             ],
-            "progress_hooks": [self._progress_hook],
             "quiet": True,
             "no_warnings": True,
             "extractor_retries": 3,
-            "fragment_retries": 5,
-            "retries": 5,
+            "fragment_retries": 10,
+            "retries": 10,
+            "throttledratelimit": 51200,
+            "throttled_rerate": 45,
             "ignoreerrors": False,
         }
 
-        try:
-            logger.info("Downloading %s", filename)
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([target_url])
-            logger.info("Download complete: %s", filename)
-            return True
-        except yt_dlp.utils.DownloadError as e:
-            logger.error("Download failed: %s", e)
-            return False
-        except Exception as e:
-            logger.error("Unexpected error: %s", e)
-            return False
+        for attempt in range(1, MAX_STALL_RETRIES + 1):
+            workers = max(1, INITIAL_WORKERS // (2 ** (attempt - 1)))
+            ydl_opts = {**ydl_base_opts, "concurrent_fragments": workers}
+            ydl_opts["progress_hooks"] = [_make_stall_hook(workers)]
+
+            try:
+                logger.info(
+                    "Downloading %s with %d concurrent fragments (attempt %d/%d)",
+                    filename, workers, attempt, MAX_STALL_RETRIES,
+                )
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([target_url])
+                logger.info("Download complete: %s", filename)
+                return True
+            except yt_dlp.utils.DownloadError as e:
+                msg = str(e).lower()
+                if "throttl" in msg or "too slow" in msg:
+                    logger.warning(
+                        "Download throttled with %d workers (attempt %d/%d). "
+                        "Sleeping %ds then reducing workers...",
+                        workers, attempt, MAX_STALL_RETRIES, STALL_BACKOFF_SLEEP,
+                    )
+                    if attempt < MAX_STALL_RETRIES:
+                        time.sleep(STALL_BACKOFF_SLEEP)
+                        continue
+                logger.error("Download failed: %s", e)
+                return False
+            except Exception as e:
+                logger.error("Unexpected error: %s", e)
+                return False
+
+        logger.error("Download failed after %d attempts", MAX_STALL_RETRIES)
+        return False
 
     def _movie_path(self, media: Media) -> tuple[Path, str]:
         label = self._media_label(media)
