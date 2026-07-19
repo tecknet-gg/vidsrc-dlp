@@ -15,7 +15,7 @@ class Config:
     quality: str = "1080p"
     no_confirm: bool = False
     quality_gate: bool = True
-    concurrent_fragments: int = 3
+    concurrent_fragments: int = 8
 
 
 def load_config(
@@ -55,5 +55,5 @@ def load_config(
         quality=quality or "1080p",
         no_confirm=no_confirm,
         quality_gate=True,
-        concurrent_fragments=concurrent_fragments if concurrent_fragments is not None else 3,
+        concurrent_fragments=concurrent_fragments if concurrent_fragments is not None else 8,
     )

@@ -29,8 +29,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     parser.add_argument("--provider", choices=["auto", "vidsrc"], default="auto",
                         help="Stream provider (default: auto - tries multiple sources for best quality)")
-    parser.add_argument("--parallel", type=int, default=3, metavar="N",
-                        help="Download N HLS fragments concurrently (default: 3, set 0 for sequential)")
+    parser.add_argument("--parallel", type=int, default=8, metavar="N",
+                        help="Download N HLS fragments concurrently (default: 8, set 0 for sequential)")
     parser.add_argument("--verbose-ytdlp", action="store_true", help="Show yt-dlp output")
     return parser.parse_args(argv)
 
