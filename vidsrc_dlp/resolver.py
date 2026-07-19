@@ -367,9 +367,6 @@ class VidsrcWinResolver(StreamProvider):
             referer="https://vidsrc.win/",
             stream_type="hls",
         )
-        else:
-            url = source["movie"].replace("{id}", str(tmdb_id))
-        return f"{base}{url}"
 
 
 @dataclass
