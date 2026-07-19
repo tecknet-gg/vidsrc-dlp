@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vidsrc-dlp"
-version = "0.8.0"
+version = "0.9.0"
 description = "CLI to search TMDB, resolve VidSrc streams, and download via yt-dlp"
 readme = "README.md"
 license = "MIT"
@@ -38,7 +38,7 @@ BugTracker = "https://github.com/tecknet-gg/vidsrc-dlp/issues"
 vidsrc-dlp = "vidsrc_dlp.cli:main"
 
 [project.optional-dependencies]
-playwright = ["playwright>=1.40"]
+playwright = ["playwright>=1.40", "playwright-stealth>=1.0"]
 
 [tool.setuptools.packages.find]
 include = ["vidsrc_dlp*"]

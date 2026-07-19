@@ -268,6 +268,14 @@ class CinebyResolver(StreamProvider):
 
         async def _capture(retries: int = 2) -> list[str]:
             from playwright.async_api import async_playwright as _async_pw
+
+            stealth = None
+            try:
+                from playwright_stealth import stealth_async
+                stealth = stealth_async
+            except ImportError:
+                pass
+
             for attempt in range(retries):
                 async with _async_pw() as pw:
                     browser = await pw.chromium.launch(
@@ -286,6 +294,9 @@ class CinebyResolver(StreamProvider):
                     )
                     page = await context.new_page()
 
+                    if stealth:
+                        await stealth(page)
+
                     m3u8_urls: list[str] = []
 
                     async def on_response(response):
@@ -298,14 +309,31 @@ class CinebyResolver(StreamProvider):
                     try:
                         await page.goto(url, wait_until="networkidle", timeout=self.timeout * 1000)
                     except Exception:
-                        await asyncio.sleep(10)
+                        await asyncio.sleep(15)
 
                     await asyncio.sleep(10)
+
+                    # Check for Cloudflare challenge page
+                    try:
+                        cf = await page.query_selector("#cf-wrapper")
+                        if cf:
+                            logger.warning(
+                                "Cineby attempt %d/%d: Cloudflare challenge detected",
+                                attempt + 1, retries,
+                            )
+                            await browser.close()
+                            continue
+                    except Exception:
+                        pass
+
                     await browser.close()
 
                     if m3u8_urls:
                         return m3u8_urls
-                    logger.debug("Cineby attempt %d/%d: no m3u8s, retrying", attempt + 1, retries)
+                    logger.debug(
+                        "Cineby attempt %d/%d: no m3u8s, retrying",
+                        attempt + 1, retries,
+                    )
             return []
 
         m3u8_urls = _run_async(_capture())
@@ -350,12 +378,19 @@ class MultiDomainResolver(StreamProvider):
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(stream.url, download=False)
             total = info.get("filesize_approx") or info.get("filesize") or 0
+            duration = info.get("duration") or 0
             heights = sorted(set(
                 f.get("height") for f in info.get("formats") or []
                 if f.get("height")
             ))
             max_height = heights[-1] if heights else 0
             frag_count = len(info.get("fragments") or info.get("requested_formats") or [])
+            if duration > 0 and duration < 900 and max_height < 720:
+                logger.warning(
+                    "Rejecting stream: only %ds duration (expected >15min) at max %dp",
+                    duration, max_height,
+                )
+                return False
             if total > 0 and total < 50 * 1024 * 1024 and not heights:
                 logger.warning(
                     "Rejecting stream: only %.0f MB estimated with no resolvable heights",
@@ -369,8 +404,8 @@ class MultiDomainResolver(StreamProvider):
                 )
                 return False
             logger.debug(
-                "Stream check: max %dp, %d fragments, %.0f MB",
-                max_height, frag_count, total / 1024 / 1024,
+                "Stream check: max %dp, %d fragments, %.0f MB, %ds duration",
+                max_height, frag_count, total / 1024 / 1024, duration,
             )
         except Exception as e:
             logger.debug("Quality check skipped: %s", e)

@@ -4,3 +4,4 @@ yt-dlp>=2024.0.0
 
 [playwright]
 playwright>=1.40
+playwright-stealth>=1.0

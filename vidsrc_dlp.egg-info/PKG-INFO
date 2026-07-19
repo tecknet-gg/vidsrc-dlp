@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: vidsrc-dlp
-Version: 0.8.0
+Version: 0.9.0
 Summary: CLI to search TMDB, resolve VidSrc streams, and download via yt-dlp
 Author: Jeevan
 License-Expression: MIT
@@ -24,6 +24,7 @@ Requires-Dist: requests>=2.31.0
 Requires-Dist: yt-dlp>=2024.0.0
 Provides-Extra: playwright
 Requires-Dist: playwright>=1.40; extra == "playwright"
+Requires-Dist: playwright-stealth>=1.0; extra == "playwright"
 Dynamic: license-file
 
 # vidsrc-dlp
