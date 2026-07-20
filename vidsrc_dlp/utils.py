@@ -33,6 +33,7 @@ class StreamInfo:
     referer: str = ""
     stream_type: str = "hls"
     urls: list[str] = field(default_factory=list)
+    trusted: bool = False
 
 
 class StreamProvider(ABC):

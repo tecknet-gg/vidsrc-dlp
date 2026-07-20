@@ -384,6 +384,7 @@ class VidsrcWinResolver(StreamProvider):
                     headers={"User-Agent": HEADERS["User-Agent"]},
                     referer=source["base"] + "/",
                     stream_type="hls",
+                    trusted=True,
                 )
 
         logger.warning("No m3u8 streams captured from any Vidsrc.win source")
@@ -536,6 +537,7 @@ class CinebyResolver(StreamProvider):
             headers={"User-Agent": HEADERS["User-Agent"]},
             referer="https://www.cineby.at/",
             stream_type="hls",
+            trusted=True,
         )
 
 
@@ -552,6 +554,8 @@ class MultiDomainResolver(StreamProvider):
     def _accept(self, stream: StreamInfo | None) -> bool:
         if stream is None:
             return False
+        if stream.trusted:
+            return True
         try:
             import yt_dlp
             opts = {
