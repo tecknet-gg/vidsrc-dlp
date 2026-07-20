@@ -240,11 +240,12 @@ class VidSrcResolver(StreamProvider):
             logger.warning("All m3u8 URLs had unresolved placeholders")
             return None
 
+        referer_url = prorcp_url if prorcp_url else rcp_url
         return StreamInfo(
             url=valid_urls[0],
             urls=valid_urls,
-            headers={"User-Agent": HEADERS["User-Agent"]},
-            referer="https://cloudorchestranova.com/",
+            headers={"User-Agent": HEADERS["User-Agent"], "Referer": referer_url},
+            referer=referer_url,
             stream_type="hls",
         )
 
