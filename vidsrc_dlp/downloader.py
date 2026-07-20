@@ -247,6 +247,7 @@ class VideoDownloader:
             "throttledratelimit": 51200,
             "throttled_rerate": 45,
             "ignoreerrors": False,
+            "skip_unavailable_fragments": False,
         }
 
         cumulative_idle = 0.0
@@ -291,13 +292,13 @@ class VideoDownloader:
                 logger.info("Download complete: %s", filename)
                 return True
             except yt_dlp.utils.DownloadError as e:
+                msg = str(e).lower()
                 if scale_up_flag.is_set():
                     new_workers = min(INITIAL_WORKERS, workers * 2)
                     logger.info("Scaling up workers: %d → %d", workers, new_workers)
                     current_workers[0] = new_workers
                     continue
 
-                msg = str(e).lower()
                 if "throttl" in msg or "too slow" in msg:
                     cumulative_idle += STALL_BACKOFF_SLEEP
                     new_workers = max(1, workers // 2)
@@ -307,21 +308,28 @@ class VideoDownloader:
                         workers, cumulative_idle, STALL_BACKOFF_SLEEP, new_workers,
                     )
                     current_workers[0] = new_workers
+                    backoff = STALL_BACKOFF_SLEEP
+                else:
+                    cumulative_idle += 10
+                    logger.warning(
+                        "Download error at %d workers (idle=%.0fs): %s. "
+                        "Retrying in 10s",
+                        workers, cumulative_idle, e,
+                    )
+                    backoff = 10
 
-                    if cumulative_idle >= PURGE_IDLE_THRESHOLD:
-                        logger.warning(
-                            "Cumulative idle %.0fs exceeds %ds — "
-                            "purging partial files and restarting fresh",
-                            cumulative_idle, PURGE_IDLE_THRESHOLD,
-                        )
-                        self._purge_partial_files(output_dir, filename)
-                        cumulative_idle = 0.0
-                        current_workers[0] = INITIAL_WORKERS
+                if cumulative_idle >= PURGE_IDLE_THRESHOLD:
+                    logger.warning(
+                        "Cumulative idle %.0fs exceeds %ds — "
+                        "purging partial files and restarting fresh",
+                        cumulative_idle, PURGE_IDLE_THRESHOLD,
+                    )
+                    self._purge_partial_files(output_dir, filename)
+                    cumulative_idle = 0.0
+                    current_workers[0] = INITIAL_WORKERS
 
-                    time.sleep(STALL_BACKOFF_SLEEP)
-                    continue
-                logger.error("Download failed: %s", e)
-                return False
+                time.sleep(backoff)
+                continue
             except Exception as e:
                 logger.error("Unexpected error: %s", e)
                 return False
