@@ -308,6 +308,8 @@ class VidsrcWinResolver(StreamProvider):
         except ImportError:
             pass
 
+        candidates: list[tuple[str, str, str]] = []  # (name, m3u8_url, referer)
+
         for source in _VSW_SOURCES:
             embed_url = self._build_url(source, tmdb_id, media_type, season, episode)
 
@@ -374,21 +376,55 @@ class VidsrcWinResolver(StreamProvider):
                 m3u8_urls = _run_async(_capture())
             except Exception as e:
                 logger.debug("Source '%s' capture error: %s", source["name"], e)
-                m3u8_urls = []
+                continue
 
             if m3u8_urls:
-                logger.info("Vidsrc.win resolved stream from '%s'", source["name"])
-                return StreamInfo(
-                    url=m3u8_urls[0],
-                    urls=m3u8_urls,
-                    headers={"User-Agent": HEADERS["User-Agent"]},
-                    referer=source["base"] + "/",
-                    stream_type="hls",
-                    trusted=True,
+                referer = embed_url
+                candidates.append((source["name"], m3u8_urls[0], referer))
+                logger.info(
+                    "Vidsrc.win source '%s' returned %d m3u8s — kept as candidate",
+                    source["name"], len(m3u8_urls),
                 )
 
-        logger.warning("No m3u8 streams captured from any Vidsrc.win source")
-        return None
+        if not candidates:
+            logger.warning("No m3u8 streams captured from any Vidsrc.win source")
+            return None
+
+        # Try candidates in order — verify by fetching the first few bytes
+        import requests as _requests
+        for name, url, referer in candidates:
+            try:
+                head = _requests.get(
+                    url, headers={"User-Agent": HEADERS["User-Agent"], "Referer": referer},
+                    timeout=10, stream=True,
+                )
+                if head.status_code == 200:
+                    head.close()
+                    logger.info("Vidsrc.win: selected candidate '%s' (verified OK)", name)
+                    return StreamInfo(
+                        url=url,
+                        headers={"User-Agent": HEADERS["User-Agent"]},
+                        referer=referer,
+                        stream_type="hls",
+                        trusted=True,
+                    )
+                else:
+                    logger.warning(
+                        "Candidate '%s' returned HTTP %d — trying next",
+                        name, head.status_code,
+                    )
+            except Exception as e:
+                logger.debug("Candidate '%s' verify error: %s — trying next", name, e)
+
+        # No candidate verified — return the first one anyway (downloader will retry)
+        logger.warning("No candidate verified — returning first found")
+        return StreamInfo(
+            url=candidates[0][1],
+            headers={"User-Agent": HEADERS["User-Agent"]},
+            referer=candidates[0][2],
+            stream_type="hls",
+            trusted=True,
+        )
 
     @staticmethod
     def _build_url(

@@ -15,6 +15,16 @@ from vidsrc_dlp.utils import Media, MediaType, StreamInfo
 
 logger = logging.getLogger("vidsrc_dlp.downloader")
 
+
+def _http_opts(stream: StreamInfo) -> dict:
+    ua = stream.headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+    return {
+        "quiet": True,
+        "no_warnings": True,
+        "referer": stream.referer or stream.url,
+        "http_headers": {"User-Agent": ua},
+    }
+
 MIN_MOVIE_BYTES = 100 * 1024 * 1024  # 100 MB
 MIN_TV_BYTES = 10 * 1024 * 1024      # 10 MB
 
@@ -50,17 +60,7 @@ class VideoDownloader:
 
     def _estimate_total_bytes(self, stream: StreamInfo) -> int | None:
         target_url = self._pick_best_url(stream)
-        opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "http_headers": {
-                "User-Agent": stream.headers.get(
-                    "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                ),
-                "Referer": stream.referer or stream.url,
-            },
-        }
+        opts = _http_opts(stream)
         try:
             with yt_dlp.YoutubeDL({**opts, "format": self._build_format_spec()}) as ydl:
                 info = ydl.extract_info(target_url, download=False)
@@ -114,17 +114,7 @@ class VideoDownloader:
     def _list_formats_for_url(
         self, url: str, stream: StreamInfo
     ) -> list[dict]:
-        opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "http_headers": {
-                "User-Agent": stream.headers.get(
-                    "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                ),
-                "Referer": stream.referer or stream.url,
-            },
-        }
+        opts = _http_opts(stream)
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -226,12 +216,12 @@ class VideoDownloader:
             "format": fmt,
             "outtmpl": output_template,
             "merge_output_format": "mp4",
+            "referer": stream.referer or stream.url,
             "http_headers": {
                 "User-Agent": stream.headers.get(
                     "User-Agent",
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 ),
-                "Referer": stream.referer or stream.url,
             },
             "postprocessors": [
                 {
@@ -293,6 +283,15 @@ class VideoDownloader:
                 return True
             except yt_dlp.utils.DownloadError as e:
                 msg = str(e).lower()
+
+                # Abort quickly on 403 — source is broken, try next provider
+                if "403" in msg or "forbidden" in msg:
+                    logger.warning(
+                        "HTTP 403 on fragments — source rejected. "
+                        "Aborting to try next provider."
+                    )
+                    return False
+
                 if scale_up_flag.is_set():
                     new_workers = min(INITIAL_WORKERS, workers * 2)
                     logger.info("Scaling up workers: %d → %d", workers, new_workers)
